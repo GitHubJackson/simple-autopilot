@@ -2,10 +2,12 @@
 
 #include <common_msgs/visualizer_data.pb.h>
 #include <simple_middleware/pub_sub_middleware.hpp>
+#include <simple_middleware/status_reporter.hpp>
 #include <thread>
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <memory>
 
 class ControlComponent {
 public:
@@ -53,3 +55,6 @@ private:
     const double WHEELBASE = 2.8; // 轴距
     const double MAX_STEER = 0.5; // 最大转角 (rad)
     const double KP = 1.0;        // P 控制器增益
+
+    std::unique_ptr<simple_middleware::StatusReporter> status_reporter_;
+};

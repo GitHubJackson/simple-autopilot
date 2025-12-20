@@ -2,6 +2,7 @@
 
 #include "CivetServer.h"
 #include <simple_middleware/pub_sub_middleware.hpp>
+#include <simple_middleware/status_reporter.hpp>
 #include "../common/thread_safe_queue.hpp" // 引入队列
 #include <memory>
 #include <set>
@@ -43,6 +44,7 @@ private:
 private:
     std::unique_ptr<CivetServer> civet_server_;
     std::unique_ptr<RealtimeWebSocketHandler> ws_handler_;
+    std::unique_ptr<simple_middleware::StatusReporter> status_reporter_;
     
     // 线程安全队列：存储待发送的 JSON 字符串
     // 实际项目中可能存的是 Protobuf 对象或智能指针

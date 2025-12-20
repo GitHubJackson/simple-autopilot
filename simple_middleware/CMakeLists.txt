@@ -14,13 +14,19 @@ set(SOURCES
     data_publisher.cpp
     test_subscriber.cpp
     logger.cpp
+    status_reporter.cpp
 )
+
+# Common Msgs Include
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
+link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/lib)
 
 # 头文件目录
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # 创建动态库
 add_library(simple_middleware_lib SHARED ${SOURCES})
+target_link_libraries(simple_middleware_lib common_msgs_lib)
 
 # 安装配置
 include(GNUInstallDirs)
@@ -37,17 +43,13 @@ install(FILES
     data_publisher.hpp 
     test_subscriber.hpp 
     logger.hpp
+    status_reporter.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simple_middleware
 )
 
-# 监视器程序也作为工具安装
-add_executable(middleware_monitor monitor.cpp)
-target_link_libraries(middleware_monitor simple_middleware_lib pthread)
-install(TARGETS middleware_monitor DESTINATION ${CMAKE_INSTALL_BINDIR})
-
 # 测试程序
 add_executable(test_middleware test_main.cpp)
-target_link_libraries(test_middleware simple_middleware_lib pthread)
+target_link_libraries(test_middleware simple_middleware_lib common_msgs_lib pthread)
 
 # 设置输出目录
 set_target_properties(test_middleware PROPERTIES

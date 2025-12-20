@@ -6,6 +6,7 @@
 #include <algorithm>
 
 ControlComponent::ControlComponent() : running_(false) {
+    status_reporter_ = std::make_unique<simple_middleware::StatusReporter>("ControlNode");
     Reset();
 }
 
@@ -24,10 +25,12 @@ void ControlComponent::Start() {
     });
 
     thread_ = std::thread(&ControlComponent::RunLoop, this);
+    status_reporter_->Start();
     std::cout << "[Control] Started data generation loop." << std::endl;
 }
 
 void ControlComponent::Stop() {
+    status_reporter_->Stop();
     running_ = false;
     if (thread_.joinable()) {
         thread_.join();

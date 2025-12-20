@@ -3,7 +3,9 @@
 #include <iostream>
 #include <chrono>
 
-VisualizerServer::VisualizerServer() : running_(false) {}
+VisualizerServer::VisualizerServer() : running_(false) {
+    status_reporter_ = std::make_unique<simple_middleware::StatusReporter>("VisualizerNode");
+}
 
 VisualizerServer::~VisualizerServer() {
     Stop();
@@ -24,6 +26,7 @@ bool VisualizerServer::Init(const std::string& port) {
 
         std::cout << "[Server] Started on port " << port << std::endl;
         StartThreads(); // 启动生产者和消费者
+        status_reporter_->Start();
         return true;
     } catch (CivetException &e) {
         std::cerr << "[Error] CivetWeb init failed: " << e.what() << std::endl;
@@ -33,6 +36,7 @@ bool VisualizerServer::Init(const std::string& port) {
 
 void VisualizerServer::Stop() {
     running_ = false;
+    if (status_reporter_) status_reporter_->Stop();
     
     // 强制唤醒可能正在等待的消费者线程
     // 注意：这里我们通过入队一个空消息来唤醒，更好的做法是在队列类里加 Stop()

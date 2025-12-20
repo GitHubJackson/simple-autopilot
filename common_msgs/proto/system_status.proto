@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package senseauto.demo;
+
+message NodeStatus {
+    // 节点名称
+    string node_name = 1;
+    
+    // 状态枚举
+    enum State {
+        OK = 0;
+        WARN = 1;
+        ERROR = 2;
+        OFFLINE = 3;
+    }
+    State state = 2;
+    
+    // 时间戳 (ms)
+    int64 timestamp = 3;
+    
+    // 附加信息 (CPU, Memory, error msg etc)
+    string message = 4;
+}
+
