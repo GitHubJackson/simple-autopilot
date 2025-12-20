@@ -1,4 +1,4 @@
-# SenseAuto Node Visualizer Demos
+# AutoPilot System Demos
 
 这是一个基于 C++ 的简易自动驾驶软件栈演示项目，展示了现代自动驾驶系统的核心架构设计，包括模块化、去中心化通信、公共消息定义以及 Web 可视化。
 
