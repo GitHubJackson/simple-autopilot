@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package senseauto.demo;
+
+// 3D 点
+message Point3D {
+    double x = 1;
+    double y = 2;
+    double z = 3;
+}
+
+// 车辆状态
+message CarState {
+    Point3D position = 1;
+    double heading = 2;
+    double speed = 3;
+    double steering_angle = 4;
+}
+
+// 障碍物
+message Obstacle {
+    int32 id = 1;
+    Point3D position = 2;
+    string type = 3; // "car", "pedestrian", "cone"
+}
+
+// 每一帧的完整数据包
+message FrameData {
+    int32 frame_id = 1;
+    double timestamp = 2;
+    CarState car_state = 3;
+    repeated Obstacle obstacles = 4;
+}

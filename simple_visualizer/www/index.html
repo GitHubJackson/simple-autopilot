@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SenseAuto Visualizer</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        height: 100vh;
+        background-color: #1e1e1e;
+        color: #e0e0e0;
+      }
+      #sidebar {
+        width: 300px;
+        padding: 20px;
+        background-color: #252526;
+        border-right: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      #main-view {
+        flex-grow: 1;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: #000;
+      }
+      canvas {
+        background-color: #121212;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+      }
+      .control-group {
+        background: #333;
+        padding: 15px;
+        border-radius: 8px;
+      }
+      .control-group h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 16px;
+        color: #fff;
+        border-bottom: 1px solid #444;
+        padding-bottom: 5px;
+      }
+      .param-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      input[type="range"] {
+        width: 100%;
+        margin: 10px 0;
+      }
+      button {
+        width: 100%;
+        padding: 10px;
+        background-color: #007acc;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s;
+      }
+      button:hover {
+        background-color: #005999;
+      }
+      button.danger {
+        background-color: #d83b01;
+      }
+      button.danger:hover {
+        background-color: #a82b01;
+      }
+      .status-tag {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: bold;
+      }
+      .status-connected {
+        background-color: #1e7e34;
+        color: white;
+      }
+      .status-disconnected {
+        background-color: #bd2130;
+        color: white;
+      }
+      #telemetry {
+        font-family: monospace;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <div class="control-group">
+        <h3>Connection</h3>
+        <div id="connection-status" class="status-tag status-disconnected">
+          Disconnected
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h3>Vehicle Control</h3>
+
+        <div style="margin-bottom: 10px">
+          <button onclick="sendCommand('set_target', 0)">
+            Go to Origin (0,0)
+          </button>
+          <button onclick="sendCommand('set_target', 1)">
+            Go to Target (30,10)
+          </button>
+        </div>
+
+        <label>Target Speed: <span id="speed-val">0</span> m/s</label>
+        <input
+          type="range"
+          id="speed-input"
+          min="0"
+          max="30"
+          step="1"
+          value="0"
+        />
+
+        <label>Steering: <span id="steer-val">0</span> rad</label>
+        <input
+          type="range"
+          id="steer-input"
+          min="-0.5"
+          max="0.5"
+          step="0.05"
+          value="0"
+        />
+
+        <div style="margin-top: 15px; display: flex; gap: 10px">
+          <button class="danger" onclick="sendCommand('reset')">
+            Reset State
+          </button>
+          <button onclick="sendCommand('stop')">Emergency Stop</button>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <h3>Telemetry</h3>
+        <div id="telemetry">Waiting for data...</div>
+      </div>
+
+      <div class="control-group">
+        <h3>View Options</h3>
+        <label
+          ><input type="checkbox" id="follow-cam" checked /> Follow Car</label
+        >
+      </div>
+    </div>
+
+    <div id="main-view">
+      <canvas id="viz-canvas" width="800" height="600"></canvas>
+    </div>
+
+    <script>
+      // --- WebSocket Connection ---
+      const wsProtocol =
+        window.location.protocol === "https:" ? "wss://" : "ws://";
+      const wsUrl = wsProtocol + window.location.host + "/ws";
+      let socket;
+      let isConnected = false;
+
+      // --- State ---
+      let carState = { x: 0, y: 0, heading: 0, speed: 0, steering: 0 };
+      let obstacles = [];
+      let frameId = 0;
+
+      // --- Canvas Setup ---
+      const canvas = document.getElementById("viz-canvas");
+      const ctx = canvas.getContext("2d");
+      const PIXELS_PER_METER = 10;
+      const VIEW_WIDTH_METERS = canvas.width / PIXELS_PER_METER;
+      const VIEW_HEIGHT_METERS = canvas.height / PIXELS_PER_METER;
+
+      function connect() {
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = () => {
+          isConnected = true;
+          document.getElementById("connection-status").className =
+            "status-tag status-connected";
+          document.getElementById("connection-status").innerText = "Connected";
+          console.log("WebSocket connected");
+        };
+
+        socket.onclose = () => {
+          isConnected = false;
+          document.getElementById("connection-status").className =
+            "status-tag status-disconnected";
+          document.getElementById("connection-status").innerText =
+            "Disconnected";
+          console.log("WebSocket disconnected, retrying in 3s...");
+          setTimeout(connect, 3000);
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "frame_data" || msg.frameId) {
+              // check frameId for protobuf generated json
+              handleFrameData(msg);
+            }
+          } catch (e) {
+            console.error("Parse error:", e, event.data);
+          }
+        };
+      }
+
+      function handleFrameData(data) {
+        // Handle Protobuf JSON naming (camelCase)
+        const car = data.carState || {};
+        const pos = car.position || { x: 0, y: 0, z: 0 };
+
+        carState = {
+          x: pos.x || 0,
+          y: pos.y || 0,
+          heading: car.heading || 0,
+          speed: car.speed || 0,
+          steering: car.steeringAngle || 0,
+        };
+
+        obstacles = data.obstacles || [];
+        frameId = data.frameId || 0;
+
+        updateUI();
+        draw();
+      }
+
+      function updateUI() {
+        document.getElementById("telemetry").innerHTML = `
+            Frame: ${frameId}<br>
+            X: ${carState.x.toFixed(2)} m<br>
+            Y: ${carState.y.toFixed(2)} m<br>
+            Heading: ${((carState.heading * 180) / Math.PI).toFixed(1)}°<br>
+            Speed: ${carState.speed.toFixed(1)} m/s<br>
+            Steer: ${carState.steering.toFixed(2)} rad
+        `;
+      }
+
+      // --- Controls ---
+      const speedInput = document.getElementById("speed-input");
+      const steerInput = document.getElementById("steer-input");
+
+      speedInput.addEventListener("input", (e) => {
+        document.getElementById("speed-val").innerText = e.target.value;
+        sendWsCommand("set_speed", parseFloat(e.target.value));
+      });
+
+      steerInput.addEventListener("input", (e) => {
+        document.getElementById("steer-val").innerText = e.target.value;
+        sendWsCommand("set_steer", parseFloat(e.target.value));
+      });
+
+      // function sendCommand(cmd, value = 0) { ... } // Removed
+
+      // Emergency stop helper
+      window.sendCommand = (cmd, arg) => {
+        if (cmd === "stop") {
+          speedInput.value = 0;
+          document.getElementById("speed-val").innerText = "0";
+          sendWsCommand("set_speed", 0);
+        } else if (cmd === "set_target") {
+          if (arg === 0) sendWsCommand("set_target", { x: 0, y: 0 });
+          if (arg === 1) sendWsCommand("set_target", { x: 30, y: 10 });
+        } else {
+          sendWsCommand(cmd, arg);
+        }
+      };
+
+      function sendWsCommand(cmd, val) {
+        if (!isConnected) return;
+        const msg = { cmd: cmd };
+        if (typeof val === "object") {
+          msg.x = val.x;
+          msg.y = val.y;
+        } else {
+          msg.value = val || 0;
+        }
+        socket.send(JSON.stringify(msg));
+      }
+
+      // --- Rendering ---
+      function worldToScreen(wx, wy) {
+        let cx = 0;
+        let cy = 0;
+
+        if (document.getElementById("follow-cam").checked) {
+          cx = carState.x;
+          cy = carState.y;
+        }
+
+        // Center of screen
+        const sx = (wx - cx) * PIXELS_PER_METER + canvas.width / 2;
+        // Invert Y for screen coordinates (up is -y)
+        const sy = canvas.height / 2 - (wy - cy) * PIXELS_PER_METER;
+
+        return { x: sx, y: sy };
+      }
+
+      function draw() {
+        // Clear background
+        ctx.fillStyle = "#121212";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw Grid (every 10 meters)
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 1;
+
+        let cx = document.getElementById("follow-cam").checked ? carState.x : 0;
+        let cy = document.getElementById("follow-cam").checked ? carState.y : 0;
+
+        const startX = Math.floor((cx - VIEW_WIDTH_METERS / 2) / 10) * 10;
+        const endX = Math.ceil((cx + VIEW_WIDTH_METERS / 2) / 10) * 10;
+        const startY = Math.floor((cy - VIEW_HEIGHT_METERS / 2) / 10) * 10;
+        const endY = Math.ceil((cy + VIEW_HEIGHT_METERS / 2) / 10) * 10;
+
+        ctx.beginPath();
+        for (let x = startX; x <= endX; x += 10) {
+          const p = worldToScreen(x, 0);
+          ctx.moveTo(p.x, 0);
+          ctx.lineTo(p.x, canvas.height);
+        }
+        for (let y = startY; y <= endY; y += 10) {
+          const p = worldToScreen(0, y);
+          ctx.moveTo(0, p.y);
+          ctx.lineTo(canvas.width, p.y);
+        }
+        ctx.stroke();
+
+        // Draw Origin
+        const origin = worldToScreen(0, 0);
+        ctx.fillStyle = "#666";
+        ctx.beginPath();
+        ctx.arc(origin.x, origin.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw Target Line
+        ctx.strokeStyle = "rgba(0, 255, 0, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 10]);
+        ctx.beginPath();
+        const p1 = worldToScreen(0, 0);
+        const p2 = worldToScreen(30, 10);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Draw Obstacles
+        obstacles.forEach((obs) => {
+          const p = worldToScreen(obs.position.x, obs.position.y);
+
+          ctx.fillStyle = "#ffcc00"; // Default yellow
+          if (obs.type === "pedestrian") ctx.fillStyle = "#ff4444"; // Red
+          if (obs.type === "car") ctx.fillStyle = "#4444ff"; // Blue
+
+          ctx.beginPath();
+          if (obs.type === "cone") {
+            // Triangle
+            ctx.moveTo(p.x, p.y - 10);
+            ctx.lineTo(p.x - 8, p.y + 5);
+            ctx.lineTo(p.x + 8, p.y + 5);
+          } else {
+            // Circle
+            ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+          }
+          ctx.fill();
+
+          // Draw ID
+          ctx.fillStyle = "#fff";
+          ctx.font = "10px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText(`ID:${obs.id}`, p.x, p.y - 15);
+        });
+
+        // Draw Ego Car
+        drawCar();
+      }
+
+      function drawCar() {
+        const p = worldToScreen(carState.x, carState.y);
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        // Canvas rotation is clockwise, math heading is usually counter-clockwise (East=0, North=90)
+        // Adjust based on your coordinate system. Assuming standard math (CCW):
+        // Screen Y is inverted, so +Heading should rotate CCW visually.
+        // Canvas rotate() rotates CW. So we need -heading.
+        ctx.rotate(-carState.heading);
+
+        // Car Body (4.8m x 2.0m approx) -> 48px x 20px
+        const length = 4.8 * PIXELS_PER_METER;
+        const width = 2.0 * PIXELS_PER_METER;
+
+        // Shadow
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(-length / 2 + 5, -width / 2 + 5, length, width);
+
+        // Body
+        ctx.fillStyle = "#00d0ff";
+        ctx.fillRect(-length / 2, -width / 2, length, width);
+
+        // Headlights / Direction indicator
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(length / 2 - 5, -width / 2 + 2, 5, 5); // Right light
+        ctx.fillRect(length / 2 - 5, width / 2 - 7, 5, 5); // Left light
+
+        // Wheels (Front are steered)
+        ctx.fillStyle = "#333";
+        const wheelL = 0.8 * PIXELS_PER_METER;
+        const wheelW = 0.3 * PIXELS_PER_METER;
+
+        // Rear wheels (fixed)
+        ctx.fillRect(-length / 2 + 5, -width / 2 - 2, wheelL, wheelW);
+        ctx.fillRect(-length / 2 + 5, width / 2 - wheelW + 2, wheelL, wheelW);
+
+        // Front wheels (steered)
+        // We need to rotate these locally
+        const frontAxleX = length / 2 - 8;
+
+        // Front Left
+        ctx.save();
+        ctx.translate(frontAxleX, -width / 2);
+        ctx.rotate(-carState.steering); // Steer angle
+        ctx.fillRect(-wheelL / 2, -wheelW / 2, wheelL, wheelW);
+        ctx.restore();
+
+        // Front Right
+        ctx.save();
+        ctx.translate(frontAxleX, width / 2);
+        ctx.rotate(-carState.steering);
+        ctx.fillRect(-wheelL / 2, -wheelW / 2, wheelL, wheelW);
+        ctx.restore();
+
+        ctx.restore();
+      }
+
+      // Start
+      connect();
+      // Initial draw
+      draw();
+    </script>
+  </body>
+</html>
