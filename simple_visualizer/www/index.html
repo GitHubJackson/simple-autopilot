@@ -272,7 +272,7 @@
         if (cmd === "stop") {
           speedInput.value = 0;
           document.getElementById("speed-val").innerText = "0";
-          sendWsCommand("set_speed", 0);
+          sendWsCommand("stop");
         } else if (cmd === "set_target") {
           if (arg === 0) sendWsCommand("set_target", { x: 0, y: 0 });
           if (arg === 1) sendWsCommand("set_target", { x: 30, y: 10 });
@@ -288,7 +288,7 @@
           msg.x = val.x;
           msg.y = val.y;
         } else {
-          msg.value = val || 0;
+          msg.value = val;
         }
         socket.send(JSON.stringify(msg));
       }

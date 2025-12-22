@@ -39,7 +39,7 @@ void ControlComponent::Stop() {
 
 void ControlComponent::Reset() {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    
+
     frame_data_.Clear();
     
     // 初始化车辆
@@ -70,6 +70,9 @@ void ControlComponent::Reset() {
     obs3->set_type("car");
 
     time_accumulator_ = 0.0;
+
+    // 初始化电量
+    frame_data_.set_battery_level(100.0);
 }
 
 void ControlComponent::SetSpeed(double speed) {
@@ -157,6 +160,8 @@ void ControlComponent::RunLoop() {
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             
+            // 更新电量
+            frame_data_.set_battery_level(frame_data_.battery_level() - 0.01);
             // 如果有目标点，计算自动转向
             ComputePurePursuitSteering(dt);
             
@@ -173,10 +178,8 @@ void ControlComponent::RunLoop() {
             car->mutable_position()->set_x(car->position().x() + dx);
             car->mutable_position()->set_y(car->position().y() + dy);
             car->set_heading(heading + dheading);
-
+            
             // 更新动态障碍物 (id=2)
-            // ... (保持原样)
-
             for (int i = 0; i < frame_data_.obstacles_size(); ++i) {
                 auto* obs = frame_data_.mutable_obstacles(i);
                 if (obs->id() == 2) {
@@ -242,6 +245,9 @@ void ControlComponent::OnControlMessage(const simple_middleware::Message& msg) {
         double x = parseJsonDouble(cmd_json, "x");
         double y = parseJsonDouble(cmd_json, "y");
         SetTarget(x, y);
+    } else if (cmd == "stop") {
+        SetSpeed(0.0);
+        std::cout << "[Control] Stop command received" << std::endl;
     }
 }
 

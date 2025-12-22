@@ -21,12 +21,15 @@ set(SOURCES
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/lib)
 
+# --- 3rdparty 配置 ---
+add_subdirectory(../3rdparty 3rdparty_build)
+
 # 头文件目录
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # 创建动态库
 add_library(simple_middleware_lib SHARED ${SOURCES})
-target_link_libraries(simple_middleware_lib common_msgs_lib)
+target_link_libraries(simple_middleware_lib common_msgs_lib 3rdparty_protobuf)
 
 # 安装配置
 include(GNUInstallDirs)
@@ -49,7 +52,7 @@ install(FILES
 
 # 测试程序
 add_executable(test_middleware test_main.cpp)
-target_link_libraries(test_middleware simple_middleware_lib common_msgs_lib pthread)
+target_link_libraries(test_middleware simple_middleware_lib common_msgs_lib 3rdparty_protobuf pthread)
 
 # 设置输出目录
 set_target_properties(test_middleware PROPERTIES
