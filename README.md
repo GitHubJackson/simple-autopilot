@@ -14,10 +14,12 @@ demos/
 ├── simple_daemon/     # [管理层] 负责各节点进程的生命周期管理与健康监控
 ├── system_monitor/    # [监控层] 集成了节点状态与网络流量的实时监视器
 ├── simple_map/        # [地图层] 提供地图静态车道线等数据
+├── simple_simulator/  # [仿真层] 物理仿真引擎，维护世界真值并进行运动学积分
+├── simple_sensor/     # [传感器层] 基于仿真真值生成传感器观测数据
 ├── simple_perception/ # [感知层] 负责障碍物检测与跟踪
 ├── simple_prediction/ # [预测层] 预测障碍物未来轨迹
 ├── simple_planning/   # [规划决策层] 负责行为决策(Decision)与轨迹生成(Planning)
-├── simple_control/    # [控制层] 模拟车辆运动学，根据指令或轨迹进行控制
+├── simple_control/    # [控制层] 根据指令或轨迹计算控制量
 ├── simple_visualizer/ # [交互层] 基于 WebSocket 和 Canvas 的 Web 可视化终端
 └── autopilot          # [工具层] 系统管理与状态查看工具
 ```
@@ -29,17 +31,27 @@ demos/
 1.  **Interact (交互)**: 用户在 Visualizer 前端设置目标点
 2.  **Command (指令)**: Visualizer 将指令封装为 `ControlCommand` 消息发布
 3.  **Map (地图)**: `simple_map` 发布静态车道线数据 `map/data`
-4.  **Perception (感知)**: 生成障碍物位置与状态
-5.  **Prediction (预测)**: 基于感知结果预测障碍物未来动态
-6.  **Planning (规划)**:
+4.  **Simulator (仿真)**: `simple_simulator` 接收控制指令，进行物理仿真并维护世界真值
+    - 订阅 `control/command` (目标速度、转向角)
+    - 基于单车模型 (Bicycle Model) 进行运动学积分，更新车辆位姿
+    - 发布 `visualizer/data` (包含车辆真值状态、障碍物信息)
+5.  **Sensor (传感器)**: `simple_sensor` 基于仿真真值生成传感器观测数据
+    - 订阅 `visualizer/data` (真值)
+    - 添加传感器噪声和误差，模拟真实传感器特性
+    - 发布传感器观测数据
+6.  **Perception (感知)**: 基于传感器数据生成障碍物位置与状态
+    - 订阅传感器观测数据
+    - 发布 `perception/obstacles`
+7.  **Prediction (预测)**: 基于感知结果预测障碍物未来动态
+8.  **Planning (规划)**:
     - **Decision (决策)**: 判断行为意图（如避让、停车、绕行）
     - **Motion Planning (运动规划)**: 结合**Map 数据**和目标点，生成三阶贝塞尔曲线轨迹
     - 发布 `planning/trajectory`
-7.  **Control (控制/仿真)**:
-    - (目前) 接收 `planning/trajectory` 或直接响应控制指令
-    - 基于单车模型 (Bicycle Model) 更新车辆位置
-    - 发布 `visualizer/data` (包含车辆状态、障碍物信息)
-8.  **Visualize (显示)**: Visualizer 订阅数据并渲染到浏览器（含地图车道线）
+9.  **Control (控制)**:
+    - 接收 `planning/trajectory` 或直接响应控制指令
+    - 计算控制量（目标速度、转向角）
+    - 发布 `control/command` 给 Simulator
+10. **Visualize (显示)**: Visualizer 订阅数据并渲染到浏览器（含地图车道线）
 
 ## 🚀 快速开始
 
@@ -61,7 +73,7 @@ chmod +x run_all.sh
 ./run_all.sh
 ```
 
-此脚本会自动打开 6 个终端窗口，分别显示各模块的实时输出。
+此脚本会自动打开多个终端窗口，分别显示各模块的实时输出。
 
 #### 方式 B：后台静默运行
 
@@ -74,48 +86,69 @@ chmod +x run_headless.sh
 
 #### 方式 C：手动分步运行
 
-如果你无法使用上述脚本，请手动开启 **6 个** 终端窗口，分别运行以下组件：
+如果你无法使用上述脚本，请手动开启多个终端窗口，分别运行以下组件：
 
-**终端 1: 系统监视器 (System Monitor)**
+**终端 1: 系统守护进程 (Daemon)**
+负责管理各模块进程，并收集 CPU、内存等运行指标。
+
+```bash
+./simple_daemon/build/daemon_node
+```
+
+**终端 2: 系统监视器 (System Monitor)**
 用于实时监控各节点健康状态（由 Daemon 报告）、网络流量以及业务指标。
 
 ```bash
 ./autopilot status
 ```
 
-**终端 2: 感知模块 (Perception)**
+**终端 3: 地图模块 (Map)**
+提供静态地图数据。
+
+```bash
+./simple_map/build/map_node
+```
+
+**终端 4: 仿真引擎 (Simulator)**
+物理仿真引擎，维护世界真值。
+
+```bash
+./simple_simulator/build/simulator_node
+```
+
+**终端 5: 传感器模块 (Sensor)**
+基于仿真真值生成传感器观测数据。
+
+```bash
+./simple_sensor/build/sensor_node
+```
+
+**终端 6: 感知模块 (Perception)**
 负责障碍物生成与检测。
 
 ```bash
 ./simple_perception/build/perception_node
 ```
 
-**终端 3: 控制与仿真模块 (Control)**
-核心业务逻辑，负责车辆运动学模拟。
-
-```bash
-./simple_control/build/control_server
-```
-
-**终端 4: 规划模块 (Planning)**
+**终端 7: 规划模块 (Planning)**
 负责路径生成和决策逻辑。
 
 ```bash
 ./simple_planning/build/planning_node
 ```
 
-**终端 5: 可视化模块 (Visualizer)**
+**终端 8: 控制模块 (Control)**
+计算控制量（目标速度、转向角）。
+
+```bash
+./simple_control/build/control_server
+```
+
+**终端 9: 可视化模块 (Visualizer)**
 Web 服务器，负责将数据推送到浏览器。
 
 ```bash
 ./simple_visualizer/build/server
-```
-
-**终端 6: 系统守护进程 (Daemon)**
-负责管理各模块进程，并收集 CPU、内存等运行指标。
-
-```bash
-./simple_daemon/build/daemon_node
 ```
 
 ### 3. 停止运行
@@ -152,6 +185,34 @@ chmod +x stop_all.sh
 - **进程监控**：实时采集各节点的 PID、CPU 使用率和内存占用。
 - **远程控制**：响应来自 Visualizer 的指令，实现节点的远程拉起或关闭。
 
+### Simple Map
+
+- **功能**：提供地图静态车道线等数据。
+- **数据流**：发布 `map/data`。
+
+### Simple Simulator
+
+- **功能**：物理仿真引擎，扮演"虚拟物理世界"的角色，维护世界真值（Ground Truth）并进行物理仿真。
+- **核心职责**：
+  - 接收 `control/command` (目标速度、转向角)
+  - 基于单车模型 (Bicycle Model) 进行运动学积分，更新车辆位姿
+  - 维护静态和动态障碍物的真值状态
+  - 发布 `visualizer/data` (包含车辆真值状态、障碍物信息)
+- **算法**：
+  - 运行频率：100Hz
+  - 动力学模拟：使用一阶滞后模型模拟车辆加速过程
+  - 运动学模拟：使用 Bicycle Model 进行积分
+- **架构意义**：实现了 Software-in-the-Loop (SIL) 架构，使得核心算法模块可以在不修改代码的情况下从仿真迁移到实车。
+
+### Simple Sensor
+
+- **功能**：基于仿真真值生成传感器观测数据，模拟真实传感器的特性。
+- **数据流**：
+  - 订阅 `visualizer/data` (来自 Simulator 的真值)
+  - 添加传感器噪声和误差
+  - 发布传感器观测数据
+- **作用**：在仿真环境中模拟真实传感器的观测特性，为感知模块提供更真实的输入数据。
+
 ### Simple Planning
 
 - **功能**：接收前端指令，结合车辆当前状态，规划未来路径。
@@ -160,15 +221,22 @@ chmod +x stop_all.sh
 
 ### Simple Perception
 
-- **功能**：模拟感知系统，生成静态和动态障碍物。
-- **数据流**：订阅车辆位置，发布 `perception/obstacles`。
-- **算法**：内置简单的障碍物运动模拟（例如正弦波运动）。
+- **功能**：基于传感器观测数据生成障碍物位置与状态。
+- **数据流**：
+  - 订阅传感器观测数据（来自 `simple_sensor`）
+  - 进行障碍物检测与跟踪
+  - 发布 `perception/obstacles`
+- **算法**：内置简单的障碍物检测和跟踪算法。
 
 ### Simple Control
 
-- **功能**：模拟车辆物理运动（单车模型），生成模拟数据。
+- **功能**：根据规划轨迹或控制指令计算控制量（目标速度、转向角）。
 - **算法**：内置 Pure Pursuit (纯追踪) 算法。
-- **特性**：包含简单的电量消耗模拟。
+- **数据流**：
+  - 订阅 `planning/trajectory` 或直接响应控制指令
+  - 订阅 `visualizer/data` (车辆当前状态，用于反馈控制)
+  - 发布 `control/command` (目标速度、转向角) 给 Simulator
+- **架构说明**：Control 模块不直接维护车辆位置，只负责计算控制量。车辆的实际运动由 Simulator 通过物理仿真计算得出。
 
 ### System Monitor
 
