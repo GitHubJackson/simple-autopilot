@@ -26,6 +26,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
 # include_directories(lib/civetweb/include)
 
 include_directories(src)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/json11/include)
 
 set(SOURCE_FILES
     src/main.cpp
@@ -36,6 +37,14 @@ set(SOURCE_FILES
 
 add_executable(server ${SOURCE_FILES})
 
+# 拷贝 www 目录到构建目录
+add_custom_command(TARGET server POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/www
+    ${CMAKE_CURRENT_BINARY_DIR}/www
+    COMMENT "Copying www directory to build directory"
+)
+
 # 链接库
 # 注意：新版 Protobuf 强烈建议链接 abseil 的所有库，或者使用 absl::base 等
 if(UNIX)
@@ -44,6 +53,7 @@ if(UNIX)
         common_msgs_lib    # 链接公共消息库
         3rdparty_protobuf  # 使用统一的 3rdparty target
         3rdparty_civetweb  # 使用统一的 3rdparty target
+        json11             # json11 库
         dl
     )
 else()
@@ -52,5 +62,6 @@ else()
         common_msgs_lib
         3rdparty_protobuf 
         3rdparty_civetweb
+        json11             # json11 库
     )
 endif()

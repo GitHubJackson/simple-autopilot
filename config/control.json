@@ -1,0 +1,8 @@
+{
+  "wheelbase": 2.8,
+  "max_steer": 0.5,
+  "kp": 1.0,
+  "lookahead_dist": 2.0,
+  "max_speed": 30.0,
+  "auto_engage_speed": 5.0
+}

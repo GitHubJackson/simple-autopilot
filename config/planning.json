@@ -1,0 +1,8 @@
+{
+  "loop_rate_ms": 100,
+  "target_reach_threshold": 1.0,
+  "default_cruise_speed": 5.0,
+  "follow_distance": 15.0,
+  "acc_kp": 0.5,
+  "acc_target_time": 2.0
+}

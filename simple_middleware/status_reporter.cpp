@@ -47,7 +47,6 @@ void StatusReporter::ReportLoop() {
     while (running_) {
         {
             std::lock_guard<std::mutex> lock(status_mutex_);
-            // Update timestamp
             auto now = std::chrono::system_clock::now().time_since_epoch();
             auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
             current_status_.set_timestamp(millis);
@@ -57,10 +56,9 @@ void StatusReporter::ReportLoop() {
                 middleware.publish("system/node_status", data);
             }
         }
-        // Heartbeat every 1 second
+        // 每隔 1 秒上报一次
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
 }
 
 } // namespace simple_middleware
-

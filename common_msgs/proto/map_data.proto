@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package senseauto.demo;
+
+import "visualizer_data.proto"; // 引用 Point3D
+
+// 车道线
+message Lane {
+    int32 id = 1;
+    repeated Point3D center_line = 2;
+    // 可以在这里扩展 left_boundary, right_boundary 等
+}
+
+// 地图数据
+message MapData {
+    repeated Lane lanes = 1;
+}

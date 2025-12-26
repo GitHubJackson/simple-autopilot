@@ -1,5 +1,5 @@
 #include "websocket_handler.hpp"
-#include "../server/visualizer_server.hpp" // 需要完整的类定义来调用 HandleClientCommand
+#include "../server/visualizer_server.hpp"
 #include <iostream>
 #include <cstring>
 

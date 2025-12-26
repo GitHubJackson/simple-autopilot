@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package simple_daemon;
+
+// 系统控制指令
+// Topic: "system/command"
+message SystemCommand {
+    enum Action {
+        UNKNOWN = 0;
+        START = 1;      // 启动
+        STOP = 2;       // 停止
+        RESTART = 3;    // 重启
+    }
+
+    enum TargetType {
+        NODE = 0;       // 单个节点
+        SYSTEM = 1;     // 整个系统
+    }
+
+    string request_id = 1;   // 请求ID，用于对应响应
+    Action action = 2;       // 动作
+    TargetType target_type = 3; 
+    string target_name = 4;  // 节点名称（例如 "simple_planning"），如果是 SYSTEM 则忽略
+}
+
+// 系统状态报告
+// Topic: "system/status"
+message SystemStatus {
+    message NodeStatus {
+        string name = 1;
+        bool is_running = 2;
+        int32 pid = 3;
+        float cpu_usage = 4;
+        float memory_usage = 5;
+    }
+
+    repeated NodeStatus nodes = 1; // 所有受控节点的状态
+    string timestamp = 2;
+}
+
+// 命令执行结果响应
+// Topic: "system/response"
+message CommandResponse {
+    string request_id = 1;
+    bool success = 2;
+    string message = 3;
+}

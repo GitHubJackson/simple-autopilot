@@ -164,6 +164,26 @@
 
     <div id="main-view">
       <canvas id="viz-canvas" width="800" height="600"></canvas>
+      <div
+        style="
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          background: rgba(0, 0, 0, 0.7);
+          padding: 5px;
+          border: 1px solid #444;
+        "
+      >
+        <div style="color: #ccc; font-size: 12px; margin-bottom: 5px">
+          Camera Feed (Fused)
+        </div>
+        <canvas
+          id="camera-canvas"
+          width="160"
+          height="120"
+          style="background: #000; border: 1px solid #333"
+        ></canvas>
+      </div>
     </div>
 
     <script>
@@ -177,17 +197,26 @@
       // --- State ---
       let carState = { x: 0, y: 0, heading: 0, speed: 0, steering: 0 };
       let obstacles = [];
+      let planningTrajectory = []; // 存储规划轨迹点
+      let mapLanes = []; // 存储地图车道线
       let frameId = 0;
 
       // --- Canvas Setup ---
       const canvas = document.getElementById("viz-canvas");
       const ctx = canvas.getContext("2d");
+
+      const camCanvas = document.getElementById("camera-canvas");
+      const camCtx = camCanvas.getContext("2d");
+      // 创建 ImageData 对象缓存 (160x120)
+      let camImageData = camCtx.createImageData(160, 120);
+
       const PIXELS_PER_METER = 10;
       const VIEW_WIDTH_METERS = canvas.width / PIXELS_PER_METER;
       const VIEW_HEIGHT_METERS = canvas.height / PIXELS_PER_METER;
 
       function connect() {
         socket = new WebSocket(wsUrl);
+        socket.binaryType = "arraybuffer"; // 重要：接收二进制数据
 
         socket.onopen = () => {
           isConnected = true;
@@ -209,15 +238,54 @@
 
         socket.onmessage = (event) => {
           try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === "frame_data" || msg.frameId) {
-              // check frameId for protobuf generated json
-              handleFrameData(msg);
+            if (typeof event.data === "string") {
+              const msg = JSON.parse(event.data);
+              if (msg.type === "frame_data" || msg.frameId) {
+                // check frameId for protobuf generated json
+                handleFrameData(msg);
+              } else if (msg.type === "planning_trajectory") {
+                // 处理 Planning 轨迹
+                planningTrajectory = msg.trajectory || [];
+                draw();
+              } else if (msg.type === "map_data") {
+                // 处理地图数据
+                mapLanes = msg.lanes || [];
+                draw();
+              }
+            } else if (event.data instanceof ArrayBuffer) {
+              // 处理图片数据 [W:4][H:4][RGB...]
+              handleCameraData(event.data);
             }
           } catch (e) {
-            console.error("Parse error:", e, event.data);
+            console.error("Parse error:", e);
           }
         };
+      }
+
+      function handleCameraData(buffer) {
+        const view = new DataView(buffer);
+        const width = view.getUint32(0); // Big Endian by default? check C++ implementation
+        // Actually C++ code used (val >> 24) etc, which is Big Endian manually constructed
+        const height = view.getUint32(4);
+
+        if (width !== camCanvas.width || height !== camCanvas.height) {
+          camCanvas.width = width;
+          camCanvas.height = height;
+          camImageData = camCtx.createImageData(width, height);
+        }
+
+        const rgbData = new Uint8Array(buffer, 8);
+        const len = width * height;
+
+        // RGB -> RGBA
+        for (let i = 0; i < len; i++) {
+          camImageData.data[i * 4 + 0] = rgbData[i * 3 + 0]; // R
+          camImageData.data[i * 4 + 1] = rgbData[i * 3 + 1]; // G
+          camImageData.data[i * 4 + 2] = rgbData[i * 3 + 2]; // B
+          camImageData.data[i * 4 + 3] = 255; // Alpha
+        }
+
+        camCtx.putImageData(camImageData, 0, 0);
       }
 
       function handleFrameData(data) {
@@ -359,6 +427,62 @@
         ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
         ctx.setLineDash([]);
+
+        // Draw Map Lanes
+        mapLanes.forEach((lane) => {
+          if (!lane.centerLine || lane.centerLine.length === 0) return;
+
+          ctx.strokeStyle = "#888"; // 灰色车道线
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+
+          const start = worldToScreen(
+            lane.centerLine[0].x,
+            lane.centerLine[0].y
+          );
+          ctx.moveTo(start.x, start.y);
+
+          for (let i = 1; i < lane.centerLine.length; i++) {
+            const pt = worldToScreen(
+              lane.centerLine[i].x,
+              lane.centerLine[i].y
+            );
+            ctx.lineTo(pt.x, pt.y);
+          }
+          ctx.stroke();
+
+          // Draw Lane ID
+          if (lane.centerLine.length > 0) {
+            const midIdx = Math.floor(lane.centerLine.length / 2);
+            const midPt = worldToScreen(
+              lane.centerLine[midIdx].x,
+              lane.centerLine[midIdx].y
+            );
+            ctx.fillStyle = "#aaa";
+            ctx.font = "10px monospace";
+            ctx.fillText(`L${lane.id}`, midPt.x, midPt.y);
+          }
+        });
+
+        // Draw Planning Trajectory
+        if (planningTrajectory.length > 0) {
+          ctx.strokeStyle = "#00ffcc"; // 青色
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          const start = worldToScreen(
+            planningTrajectory[0].x,
+            planningTrajectory[0].y
+          );
+          ctx.moveTo(start.x, start.y);
+          for (let i = 1; i < planningTrajectory.length; i++) {
+            const pt = worldToScreen(
+              planningTrajectory[i].x,
+              planningTrajectory[i].y
+            );
+            ctx.lineTo(pt.x, pt.y);
+          }
+          ctx.stroke();
+        }
 
         // Draw Obstacles
         obstacles.forEach((obs) => {

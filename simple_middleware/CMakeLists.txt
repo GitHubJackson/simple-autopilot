@@ -19,6 +19,7 @@ set(SOURCES
 
 # Common Msgs Include
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/json11/include) # Add json11 headers
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/lib)
 
 # --- 3rdparty 配置 ---
@@ -28,8 +29,8 @@ add_subdirectory(../3rdparty 3rdparty_build)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # 创建动态库
-add_library(simple_middleware_lib SHARED ${SOURCES})
-target_link_libraries(simple_middleware_lib common_msgs_lib 3rdparty_protobuf)
+add_library(simple_middleware_lib SHARED ${SOURCES} config_manager.cpp)
+target_link_libraries(simple_middleware_lib common_msgs_lib 3rdparty_protobuf json11)
 
 # 安装配置
 include(GNUInstallDirs)
@@ -47,6 +48,7 @@ install(FILES
     test_subscriber.hpp 
     logger.hpp
     status_reporter.hpp
+    config_manager.hpp
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/simple_middleware
 )
 

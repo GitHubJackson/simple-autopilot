@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package senseauto.demo;
+
+message CameraObject {
+    int32 id = 1;
+    float rel_x = 2; // 相对车辆的纵向距离 (米)
+    float rel_y = 3; // 相对车辆的横向距离 (米) - 左正右负
+    float width = 4;
+    float height = 5;
+    string type = 6;
+}
+
+message CameraFrame {
+    int64 timestamp = 1;
+    int32 frame_id = 2;
+    repeated CameraObject objects = 3;
+    
+    // 新增：模拟的图像数据
+    bytes raw_image = 4;
+    int32 image_width = 5;
+    int32 image_height = 6;
+    string image_format = 7; // "raw_gray" 或 "ppm"
+}
+
+// 新增：2D 检测结果
+message BoundingBox2D {
+    int32 x = 1; // 像素坐标
+    int32 y = 2;
+    int32 width = 3;
+    int32 height = 4;
+    string label = 5;
+    float score = 6;
+}
+
+message Detection2DArray {
+    int64 timestamp = 1;
+    repeated BoundingBox2D boxes = 2;
+}

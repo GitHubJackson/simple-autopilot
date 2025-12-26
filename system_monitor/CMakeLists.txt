@@ -10,9 +10,13 @@ add_subdirectory(../3rdparty 3rdparty_build)
 # 包含安装目录的头文件 (simple_middleware, common_msgs)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/lib)
+include_directories(src)
 
 # --- Executable ---
-add_executable(monitor src/monitor.cpp)
+add_executable(monitor 
+    src/main.cpp
+    src/monitor.cpp
+)
 
 # --- Libraries ---
 if(UNIX)
@@ -35,4 +39,3 @@ endif()
 # --- Install ---
 include(GNUInstallDirs)
 install(TARGETS monitor DESTINATION ${CMAKE_INSTALL_BINDIR})
-

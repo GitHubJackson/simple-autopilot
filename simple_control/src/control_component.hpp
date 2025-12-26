@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <memory>
+#include <vector>
 
 class ControlComponent {
 public:
@@ -21,40 +22,46 @@ public:
     void SetSpeed(double speed);
     void SetSteering(double angle);
     void Reset();
-    void SetTarget(double x, double y); // 设置追踪目标点
+    void SetTarget(double x, double y); // 设置追踪目标点 (废弃，优先使用轨迹)
 
 private:
     void RunLoop();
     void OnControlMessage(const simple_middleware::Message& msg);
-    std::string GetSerializedData(int frame_id);
+    void OnPlanningTrajectory(const simple_middleware::Message& msg);
+    void OnSimulatorState(const simple_middleware::Message& msg); // New
     
     // 纯追踪算法 (Pure Pursuit)
-    // 根据当前位置和朝向，计算追踪目标点所需的转向角
     void ComputePurePursuitSteering(double dt);
-
-    // JSON 解析辅助
-    std::string parseJsonString(const std::string& json, const std::string& key);
-    double parseJsonDouble(const std::string& json, const std::string& key);
+    
+    // 轨迹跟踪辅助
+    void UpdateLookaheadPoint();
 
 private:
     std::atomic<bool> running_;
     std::thread thread_;
     std::mutex state_mutex_;
 
-    // 车辆状态
-    senseauto::demo::FrameData frame_data_;
-    double time_accumulator_ = 0.0;
+    // 车辆状态 (从 Simulator 同步)
+    senseauto::demo::CarState current_car_state_;
     
     // 纯追踪参数
-    struct {
+    struct TargetPoint {
         double x = 0.0;
         double y = 0.0;
         bool active = false;
-    } target_point_;
+    };
+    TargetPoint target_point_;
+
+    // 接收到的规划轨迹
+    std::vector<std::pair<double, double>> current_trajectory_;
     
-    const double WHEELBASE = 2.8; // 轴距
-    const double MAX_STEER = 0.5; // 最大转角 (rad)
-    const double KP = 1.0;        // P 控制器增益
+    // Control Parameters (loaded from config)
+    double wheelbase_ = 2.8;
+    double max_steer_ = 0.5;
+    double kp_ = 1.0;
+    double lookahead_dist_ = 2.0;
+    double max_speed_ = 30.0;
+    double auto_engage_speed_ = 5.0;
 
     std::unique_ptr<simple_middleware::StatusReporter> status_reporter_;
 };

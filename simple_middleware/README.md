@@ -1,165 +1,86 @@
-# 简易订阅发布中间件
+# Simple Middleware (通信中间件)
 
-## 概述
+`simple_middleware` 是本项目的通信骨架，它提供了一个轻量级、去中心化的发布/订阅 (Pub/Sub) 机制。它的设计目标是模拟 ROS 2 / CyberRT 的核心通信体验，但底层实现保持极致简单（基于 UDP 广播）。
 
-这是一个独立的、线程安全的订阅发布中间件实现，提供基本的消息传递功能。完全解耦，不依赖任何外部项目。
+## 1. 架构原理
 
-## 项目结构
+该中间件采用了 **UDP 广播 (Broadcast)** 模式来实现“软总线”。
 
-```
-simple_middleware/
-├── pub_sub_middleware.hpp      # 中间件核心头文件
-├── pub_sub_middleware.cpp      # 中间件核心实现
-├── data_publisher.hpp          # 数据发布模块头文件
-├── data_publisher.cpp          # 数据发布模块实现
-├── test_subscriber.hpp         # 测试订阅者头文件
-├── test_subscriber.cpp         # 测试订阅者实现
-├── test_main.cpp               # 测试程序
-├── logger.hpp                  # 简单日志工具（独立实现）
-├── CMakeLists.txt              # CMake构建文件
-└── README.md                   # 本文件
-```
+### 核心特性
 
-## 依赖
+- **无 Broker**: 没有中心转发节点，所有节点对等
+- **全网广播**: 消息发往 `255.255.255.255`，局域网内所有节点都能收到
+- **端口复用**: 利用 `SO_REUSEPORT`，所有模块监听同一个端口 (`12345`)
+- **话题过滤**: 接收端在应用层根据 Topic 字符串进行过滤
 
-- C++11 或更高版本
-- pthread（Linux 系统自带）
-- CMake 3.10+（用于构建）
+### 数据流图
 
-**无其他外部依赖！**
+```mermaid
+graph LR
+    Pub[发布者] -- sendto(255.255.255.255) --> Network((局域网))
+    Network -- recvfrom --> Sub1[订阅者 A]
+    Network -- recvfrom --> Sub2[订阅者 B]
+    Network -- recvfrom --> Sub3[非订阅者]
 
-## 编译
-
-```bash
-mkdir build
-cd build
-cmake ..
-make
+    subgraph "接收端逻辑"
+        Sub1 -- "Topic 匹配?" --> Callback[执行回调]
+        Sub3 -- "Topic 不匹配" --> Drop[丢弃数据]
+    end
 ```
 
-编译后会生成 `bin/test_middleware` 可执行文件。
+## 2. 代码结构
 
-## 运行测试
+| 文件                         | 描述                                                         |
+| :--------------------------- | :----------------------------------------------------------- |
+| **`pub_sub_middleware.hpp`** | 核心类。单例模式，管理 UDP Socket 和接收线程。               |
+| **`data_publisher.hpp`**     | 泛型封装。提供类似 ROS 的 `Publisher<T>` 接口 (未完全实装)。 |
+| **`status_reporter.hpp`**    | 工具类。用于节点向 Daemon 汇报心跳和状态。                   |
+| **`config_manager.hpp`**     | 配置类。负责解析 `config/*.json` 文件。                      |
+| **`logger.hpp`**             | 日志工具。提供简单的控制台/文件日志。                        |
 
-```bash
-./bin/test_middleware
-```
+## 3. 使用示例
 
-## 核心功能
-
-### 1. PubSubMiddleware（中间件核心）
-
-单例模式的订阅发布中间件，提供以下功能：
-
-- **发布消息**: `publish(topic, data)`
-- **订阅主题**: `subscribe(topic, callback)`
-- **取消订阅**: `unsubscribe(subscribe_id)`
-- **查询统计**: `getSubscriberCount(topic)`, `getAllTopics()`
-
-### 2. DataPublisher（数据发布模块）
-
-定时发布测试数据的模块：
-
-- 可配置发布间隔
-- 自动生成 JSON 格式的测试数据
-- 线程安全
-
-### 3. TestSubscriber（测试订阅者）
-
-用于测试的订阅者：
-
-- 自动统计接收到的消息数量
-- 保存最后一次接收的消息
-
-## 使用方法
-
-### 基本使用示例
+### 发布消息 (Publisher)
 
 ```cpp
-#include "pub_sub_middleware.hpp"
-#include "data_publisher.hpp"
-#include "test_subscriber.hpp"
+#include "simple_middleware/pub_sub_middleware.hpp"
 
-using namespace simple_middleware;
+void SendData() {
+    auto& middleware = simple_middleware::PubSubMiddleware::getInstance();
 
-// 1. 创建发布者（每1秒发布一次）
-DataPublisher publisher("test/topic", 1000);
-publisher.start();
+    std::string topic = "test/topic";
+    std::string payload = "{ \"data\": 123 }";
 
-// 2. 创建订阅者
-TestSubscriber subscriber("test/topic");
-subscriber.start();
-
-// 3. 运行一段时间
-std::this_thread::sleep_for(std::chrono::seconds(10));
-
-// 4. 停止
-publisher.stop();
-subscriber.stop();
-
-// 5. 查看统计
-std::cout << "发布: " << publisher.getMessageCount() << std::endl;
-std::cout << "接收: " << subscriber.getMessageCount() << std::endl;
+    middleware.publish(topic, payload);
+}
 ```
 
-### 直接使用中间件 API
+### 订阅消息 (Subscriber)
 
 ```cpp
-using namespace simple_middleware;
+#include "simple_middleware/pub_sub_middleware.hpp"
 
-auto& middleware = PubSubMiddleware::getInstance();
+void Init() {
+    auto& middleware = simple_middleware::PubSubMiddleware::getInstance();
 
-// 订阅
-int64_t sub_id = middleware.subscribe("my/topic",
-    [](const Message& msg) {
-        std::cout << "收到消息: " << msg.data << std::endl;
-    }
-);
-
-// 发布
-middleware.publish("my/topic", "Hello, World!");
-
-// 取消订阅
-middleware.unsubscribe(sub_id);
+    middleware.subscribe("test/topic", [](const simple_middleware::Message& msg) {
+        std::cout << "收到数据: " << msg.data << std::endl;
+    });
+}
 ```
 
-## 特性
+## 4. 协议细节 (Wire Protocol)
 
-1. **完全独立**: 不依赖任何外部项目或库
-2. **线程安全**: 使用 mutex 保护所有共享数据
-3. **单例模式**: 全局唯一的中间件实例
-4. **回调机制**: 使用 std::function 实现灵活的回调
-5. **简单易用**: API 设计简洁明了
-6. **轻量级**: 代码量小，易于理解和维护
+底层 UDP 数据包的二进制格式非常简单：
 
-## 命名空间
+| 字段          | 长度   | 说明                                           |
+| :------------ | :----- | :--------------------------------------------- |
+| **Topic**     | 变长   | 话题字符串，例如 "visualizer/data"             |
+| **Separator** | 1 字节 | 空字符 `\0`，用于分隔 Topic 和 Payload         |
+| **Payload**   | 变长   | 实际的数据内容 (Protobuf 二进制或 JSON 字符串) |
 
-所有代码都在 `simple_middleware` 命名空间下，避免与其他项目冲突。
+## 5. 局限性
 
-## 日志系统
-
-项目包含一个简单的日志工具 `logger.hpp`，支持：
-
-- DEBUG, INFO, WARN, ERROR 四个级别
-- 线程安全的日志输出
-- 可通过修改 `Logger::min_level_` 控制日志级别
-
-## 注意事项
-
-1. 订阅回调函数应该是线程安全的
-2. 回调函数中不要执行耗时操作，避免阻塞其他订阅者
-3. 取消订阅后，回调函数不会再被调用
-4. 消息是同步传递的，发布者会等待所有订阅者回调完成
-
-## 扩展建议
-
-- 添加消息队列缓冲
-- 支持消息过滤
-- 添加消息持久化
-- 支持多播和广播
-- 添加性能监控
-- 支持异步消息传递
-
-## 许可证
-
-本项目为独立项目，可根据需要添加许可证信息。
+- **流量浪费**: 即使模块不关心某些消息，底层网卡和 OS 依然会处理这些 UDP 包（广播特性）。
+- **可靠性**: UDP 传输不可靠，可能丢包或乱序。
+- **安全性**: 局域网内任何设备都可以发送伪造消息。

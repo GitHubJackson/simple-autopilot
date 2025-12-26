@@ -61,3 +61,8 @@ install(TARGETS common_msgs_lib
 install(FILES ${PROTO_HDRS}
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/common_msgs
 )
+
+# 安装手动编写的头文件 (simple_image.hpp)
+install(FILES simple_image.hpp
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/common_msgs
+)

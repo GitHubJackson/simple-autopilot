@@ -9,6 +9,13 @@ message Point3D {
     double z = 3;
 }
 
+// 轨迹点
+message TrajectoryPoint {
+    double x = 1;
+    double y = 2;
+    double speed = 3; // 期望速度
+}
+
 // 车辆状态
 message CarState {
     Point3D position = 1;
@@ -22,6 +29,10 @@ message Obstacle {
     int32 id = 1;
     Point3D position = 2;
     string type = 3; // "car", "pedestrian", "cone"
+    double length = 4;
+    double width = 5;
+    double height = 6;
+    double heading = 7; // 障碍物朝向
 }
 
 // 每一帧的完整数据包
@@ -30,4 +41,13 @@ message FrameData {
     double timestamp = 2;
     CarState car_state = 3;
     repeated Obstacle obstacles = 4;
+    double battery_level = 5;
+    repeated TrajectoryPoint trajectory = 6;
+}
+
+// 控制指令消息
+message ControlCommand {
+    string cmd = 1;      // "set_target", "set_speed", "stop" ...
+    double value = 2;    // 通用数值参数
+    Point3D target = 3;  // 目标点参数 (使用 Point3D 复用 x, y)
 }

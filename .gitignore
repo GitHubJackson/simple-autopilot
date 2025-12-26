@@ -9,6 +9,7 @@ bin/
 lib/
 
 # 临时文件
+logs
 .DS_Store
 *.swp
 *.user
@@ -16,3 +17,4 @@ lib/
 # IDE 配置
 .vscode/
 .idea/
+

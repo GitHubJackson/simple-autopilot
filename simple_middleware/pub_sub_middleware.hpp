@@ -45,6 +45,7 @@ class PubSubMiddleware {
 public:
     /**
      * @brief 获取单例实例
+     * 【注意：单例模式】保证全局只有一个中间件实例，方便在不同模块间共享通信状态
      */
     static PubSubMiddleware& getInstance() {
         static PubSubMiddleware instance;
@@ -64,6 +65,7 @@ public:
      * @param topic 主题名称
      * @param callback 回调函数，当收到消息时调用
      * @return 订阅ID（可用于取消订阅），失败返回-1
+     * 【注意：std::function】这允许传入任何可调用对象（函数指针、Lambda、std::bind等）
      */
     int64_t subscribe(const std::string& topic, SubscribeCallback callback);
 

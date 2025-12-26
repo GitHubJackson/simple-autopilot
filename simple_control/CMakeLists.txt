@@ -20,6 +20,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
 # 假设 simple_middleware 安装在 ../install 目录
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/lib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../install/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../3rdparty/json11/include)
 
 # --- Source ---
 include_directories(src)
@@ -37,6 +38,7 @@ if(UNIX)
         simple_middleware_lib
         common_msgs_lib    # 链接公共消息库
         3rdparty_protobuf  # 使用统一的 3rdparty target
+        json11
         dl
     )
 else()

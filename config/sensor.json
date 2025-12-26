@@ -1,0 +1,7 @@
+{
+  "pos_x": 2.0,
+  "pos_y": 0.0,
+  "fov": 60.0,
+  "max_distance": 80.0,
+  "noise_std_dev": 0.2
+}

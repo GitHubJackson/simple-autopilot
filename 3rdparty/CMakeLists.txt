@@ -25,3 +25,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/civetweb/CMakeLists.txt")
     )
     message(STATUS "3rdparty: CivetWeb configured")
 endif()
+
+# --- json11 ---
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/json11/CMakeLists.txt")
+    add_subdirectory(json11)
+    message(STATUS "3rdparty: json11 configured")
+endif()

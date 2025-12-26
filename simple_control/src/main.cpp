@@ -2,16 +2,18 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <simple_middleware/logger.hpp>
 
 int main(int argc, char* argv[]) {
-    std::cout << "=== Simple Control Module ===" << std::endl;
-    std::cout << "Connecting to middleware..." << std::endl;
+    // 初始化日志 (写入 logs/control.log)
+    simple_middleware::Logger::GetInstance().Init("Control", "logs/control.log");
+    
+    simple_middleware::Logger::Info("=== Simple Control Module Starting ===");
 
     ControlComponent control;
     control.Start();
     
-    std::cout << "Control module running..." << std::endl;
-    std::cout << "Press Ctrl+C to exit." << std::endl;
+    simple_middleware::Logger::Info("Control module running...");
     
     // 保持主线程运行
     while (true) {

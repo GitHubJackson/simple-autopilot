@@ -1,68 +1,102 @@
-/*
- * @Desc: 中间件流量与节点状态监视器
- * @Author: Assistant
- * @Date: 2025/12/20
- */
-
-#include <simple_middleware/pub_sub_middleware.hpp>
-#include <common_msgs/system_status.pb.h>
+#include "monitor.hpp"
+#include <common_msgs/visualizer_data.pb.h>
 #include <iostream>
 #include <iomanip>
 #include <thread>
-#include <chrono>
-#include <map>
-#include <mutex>
-#include <ctime>
 
 using namespace simple_middleware;
 
-// 流量统计信息
-struct TopicStats {
-    uint64_t count = 0;
-    uint64_t bytes = 0;
-    std::chrono::system_clock::time_point last_msg_time;
-};
+SystemMonitor::SystemMonitor() : running_(false) {}
 
-// 节点状态缓存
-struct NodeInfo {
-    senseauto::demo::NodeStatus status;
-    std::chrono::system_clock::time_point last_seen;
-};
+SystemMonitor::~SystemMonitor() {
+    running_ = false;
+}
 
-std::map<std::string, TopicStats> g_topic_stats;
-std::map<std::string, NodeInfo> g_node_stats;
-std::mutex g_mutex;
+void SystemMonitor::Init() {
+    auto& middleware = PubSubMiddleware::getInstance();
+    
+    // 使用 lambda 绑定成员函数
+    auto callback = [this](const Message& msg) {
+        this->OnMessage(msg);
+    };
 
-void OnMessage(const Message& msg) {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    // 订阅业务主题
+    middleware.subscribe("visualizer/data", callback);
+    middleware.subscribe("visualizer/control", callback);
+    middleware.subscribe("planning/trajectory", callback);
+    
+    // 订阅系统状态 (来自 Daemon)
+    middleware.subscribe("system/status", callback);
+}
+
+void SystemMonitor::Run(MonitorMode mode) {
+    running_ = true;
+    PrintStats(mode);
+}
+
+void SystemMonitor::OnMessage(const Message& msg) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto now = std::chrono::system_clock::now();
     
     // 更新主题流量统计
-    auto& stat = g_topic_stats[msg.topic];
+    auto& stat = topic_stats_[msg.topic];
     stat.count++;
     stat.bytes += msg.data.size();
-    stat.last_msg_time = std::chrono::system_clock::now();
+    stat.last_msg_time = now;
+    
+    // Hz 计算
+    if (stat.window_start.time_since_epoch().count() == 0) {
+        stat.window_start = now;
+    }
+    stat.msgs_in_window++;
+    
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - stat.window_start).count();
+    if (duration >= 1000) {
+        stat.current_hz = (float)stat.msgs_in_window / (duration / 1000.0f);
+        stat.msgs_in_window = 0;
+        stat.window_start = now;
+    }
 
-    // 如果是节点状态消息，解析并更新节点列表
-    if (msg.topic == "system/node_status") {
-        senseauto::demo::NodeStatus status;
-        if (status.ParseFromString(msg.data)) {
-            g_node_stats[status.node_name()] = {status, std::chrono::system_clock::now()};
+    if (msg.topic == "system/status") {
+        simple_daemon::SystemStatus sys_status;
+        if (sys_status.ParseFromString(msg.data)) {
+            for (const auto& node : sys_status.nodes()) {
+                node_stats_[node.name()] = NodeStatusInfo{node, std::chrono::system_clock::now()};
+            }
+        }
+    }
+    // 解析车辆数据
+    else if (msg.topic == "visualizer/data") {
+        senseauto::demo::FrameData frame;
+        if (frame.ParseFromString(msg.data)) {
+            vehicle_data_.has_data = true;
+            vehicle_data_.frame_id = frame.frame_id();
+            vehicle_data_.battery = frame.battery_level();
+            vehicle_data_.obstacle_count = frame.obstacles_size();
+            
+            if (frame.has_car_state()) {
+                vehicle_data_.speed = frame.car_state().speed();
+                if (frame.car_state().has_position()) {
+                    vehicle_data_.x = frame.car_state().position().x();
+                    vehicle_data_.y = frame.car_state().position().y();
+                }
+            }
+        }
+    }
+    else if (msg.topic == "planning/trajectory") {
+        senseauto::demo::FrameData traj;
+        if (traj.ParseFromString(msg.data)) {
+            vehicle_data_.trajectory_points = traj.trajectory_size();
         }
     }
 }
 
-std::string StateToString(senseauto::demo::NodeStatus::State state) {
-    switch(state) {
-        case senseauto::demo::NodeStatus::OK: return "\033[32mOK\033[0m"; // Green
-        case senseauto::demo::NodeStatus::WARN: return "\033[33mWARN\033[0m"; // Yellow
-        case senseauto::demo::NodeStatus::ERROR: return "\033[31mERROR\033[0m"; // Red
-        case senseauto::demo::NodeStatus::OFFLINE: return "\033[37mOFFLINE\033[0m"; // Gray
-        default: return "UNKNOWN";
-    }
+std::string SystemMonitor::StateToString(bool is_running) {
+    return is_running ? "\033[32mRUNNING\033[0m" : "\033[31mSTOPPED\033[0m";
 }
 
-void PrintStats() {
-    while (true) {
+void SystemMonitor::PrintStats(MonitorMode mode) {
+    while (running_) {
         // 清屏
         std::cout << "\033[2J\033[1;1H";
         
@@ -70,60 +104,91 @@ void PrintStats() {
         std::cout << "Time: " << std::time(nullptr) << std::endl;
         std::cout << "----------------------------------------------------------------" << std::endl;
         
-        std::lock_guard<std::mutex> lock(g_mutex);
+        std::lock_guard<std::mutex> lock(mutex_);
         auto now = std::chrono::system_clock::now();
 
-        // 1. 节点状态面板
-        std::cout << ">>> Node Status" << std::endl;
-        std::cout << std::left << std::setw(20) << "NODE" 
-                  << std::setw(10) << "STATE" 
-                  << std::setw(10) << "LAST SEEN" 
-                  << "MESSAGE" << std::endl;
-        
-        if (g_node_stats.empty()) {
-            std::cout << "(No nodes detected yet)" << std::endl;
-        } else {
-            for (const auto& pair : g_node_stats) {
-                const auto& node = pair.second.status;
-                const auto& last_seen = pair.second.last_seen;
-                
-                auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now - last_seen).count();
-                
-                // 判定是否超时
-                bool timeout = duration_ms > 3000;
-                std::string state_str = timeout ? "\033[31mTIMEOUT\033[0m" : StateToString(node.state());
-                std::string time_str = std::to_string(duration_ms) + "ms";
-
-                std::cout << std::left << std::setw(20) << node.node_name() 
-                          << std::setw(20) << state_str // width includes escape codes
-                          << std::setw(10) << time_str 
-                          << node.message() << std::endl;
+        // 1. 车辆仪表盘 (Business Metrics)
+        if (mode == MonitorMode::ALL) {
+            std::cout << ">>> Vehicle Dashboard" << std::endl;
+            if (vehicle_data_.has_data) {
+                std::cout << "Speed:    " << std::fixed << std::setprecision(1) << vehicle_data_.speed << " m/s" 
+                          << "   Battery: " << std::setprecision(0) << vehicle_data_.battery << "%" << std::endl;
+                std::cout << "Position: (" << std::setprecision(1) << vehicle_data_.x << ", " << vehicle_data_.y << ")"
+                          << "   Obstacles: " << vehicle_data_.obstacle_count << std::endl;
+                std::cout << "Frame ID: " << vehicle_data_.frame_id 
+                          << "      Plan Pts:  " << vehicle_data_.trajectory_points << std::endl;
+            } else {
+                std::cout << "(Waiting for vehicle data...)" << std::endl;
             }
+            std::cout << std::endl;
         }
-        std::cout << std::endl;
 
-        // 2. 网络流量面板
-        std::cout << ">>> Network Traffic" << std::endl;
-        std::cout << std::left << std::setw(25) << "TOPIC" 
-                  << std::setw(10) << "MSGS" 
-                  << std::setw(10) << "BYTES" 
-                  << "STATUS" << std::endl;
-                  
-        for (const auto& pair : g_topic_stats) {
-            const auto& topic = pair.first;
-            const auto& stat = pair.second;
+        // 2. 节点状态面板 (Daemon Status)
+        if (mode == MonitorMode::ALL || mode == MonitorMode::NODE_STATUS) {
+            std::cout << ">>> Node Status (Reported by Daemon)" << std::endl;
+            std::cout << std::left << std::setw(20) << "NODE" 
+                      << std::setw(15) << "STATE" 
+                      << std::setw(10) << "PID" 
+                      << std::setw(10) << "%CPU"
+                      << std::setw(10) << "MEM(MB)"
+                      << std::setw(10) << "LAST SEEN" << std::endl;
             
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - stat.last_msg_time).count();
-            
-            std::string status = (duration < 1000) ? "ACTIVE" : "IDLE";
-            if (duration > 5000) status = "OFFLINE";
+            if (node_stats_.empty()) {
+                std::cout << "(No daemon status received)" << std::endl;
+            } else {
+                for (const auto& pair : node_stats_) {
+                    const auto& node = pair.second.status;
+                    const auto& last_seen = pair.second.last_seen;
+                    
+                    auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - last_seen).count();
+                    
+                    // 判定 Daemon 是否断连
+                    bool timeout = duration_ms > 5000;
+                    std::string state_str = timeout ? "\033[33mSTALE\033[0m" : StateToString(node.is_running());
+                    std::string time_str = std::to_string(duration_ms) + "ms";
 
-            std::cout << std::left << std::setw(25) << topic 
-                      << std::setw(10) << stat.count 
-                      << std::setw(10) << stat.bytes 
-                      << status << std::endl;
+                    std::cout << std::left << std::setw(20) << node.name() 
+                              << std::setw(24) << state_str // width includes escape codes
+                              << std::setw(10) << node.pid()
+                              << std::setw(10) << std::fixed << std::setprecision(1) << node.cpu_usage()
+                              << std::setw(10) << std::fixed << std::setprecision(1) << node.memory_usage()
+                              << std::setw(10) << time_str << std::endl;
+                }
+            }
+            std::cout << std::endl;
+        }
+
+        // 3. 网络流量面板 (Topic Status)
+        if (mode == MonitorMode::ALL || mode == MonitorMode::TOPIC_STATUS) {
+            std::cout << ">>> Network Traffic & Diagnostics" << std::endl;
+            std::cout << std::left << std::setw(25) << "TOPIC" 
+                      << std::setw(10) << "HZ" 
+                      << std::setw(10) << "MSGS" 
+                      << std::setw(10) << "BYTES" 
+                      << "STATUS" << std::endl;
+                      
+            for (const auto& pair : topic_stats_) {
+                const auto& topic = pair.first;
+                const auto& stat = pair.second;
+                
+                auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - stat.last_msg_time).count();
+                
+                std::string status = (duration < 1000) ? "ACTIVE" : "IDLE";
+                if (duration > 5000) status = "OFFLINE";
+                
+                // 简单的 Hz 诊断告警
+                if (topic == "visualizer/data" && status == "ACTIVE" && stat.current_hz < 5.0f) {
+                    status = "\033[33mLOW FPS\033[0m"; // Yellow Warning
+                }
+
+                std::cout << std::left << std::setw(25) << topic 
+                          << std::setw(10) << std::fixed << std::setprecision(1) << stat.current_hz
+                          << std::setw(10) << stat.count 
+                          << std::setw(10) << stat.bytes 
+                          << status << std::endl;
+            }
         }
         
         std::cout << "----------------------------------------------------------------" << std::endl;
@@ -132,21 +197,3 @@ void PrintStats() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 }
-
-int main() {
-    auto& middleware = PubSubMiddleware::getInstance();
-    
-    // 订阅业务主题
-    middleware.subscribe("visualizer/data", OnMessage);
-    middleware.subscribe("visualizer/control", OnMessage);
-    
-    // 订阅系统状态
-    middleware.subscribe("system/node_status", OnMessage);
-    
-    // 启动显示线程
-    std::thread printer(PrintStats);
-    printer.join();
-    
-    return 0;
-}
-
