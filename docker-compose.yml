@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_TYPE: Release
+        JOBS: 4
+    image: simple-autopilot:latest
+    container_name: simple-autopilot-builder
+    volumes:
+      # 挂载项目目录，这样构建产物会保留在主机上
+      - .:/workspace
+      # 可选：挂载构建缓存目录（如果需要）
+      # - build-cache:/workspace/.build-cache
+    working_dir: /workspace
+    environment:
+      - INSTALL_DIR=/workspace/install
+      - PATH=/workspace/install/bin:${PATH}
+      - LD_LIBRARY_PATH=/workspace/install/lib:${LD_LIBRARY_PATH}
+    # 默认命令：构建整个项目
+    command: /workspace/build_all.sh
+    # 如果需要交互式 shell，可以覆盖 command
+    # command: /bin/bash
+    stdin_open: true
+    tty: true
+# 可选：定义卷用于缓存（如果需要）
+# volumes:
+#   build-cache:
+

@@ -28,6 +28,8 @@ private:
     
     std::mutex state_mutex_;
     senseauto::demo::CarState current_car_state_;
+    senseauto::demo::FrameData current_ground_truth_; // 用于模拟检测算法
+    bool has_ground_truth_ = false;
     std::vector<senseauto::demo::Obstacle> obstacles_;
     
     double time_accumulator_ = 0.0;

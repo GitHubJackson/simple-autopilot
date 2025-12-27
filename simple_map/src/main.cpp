@@ -1,6 +1,7 @@
 #include "map_component.hpp"
 #include <iostream>
 #include <csignal>
+#include <simple_middleware/logger.hpp>
 
 std::unique_ptr<MapComponent> map_node;
 
@@ -8,10 +9,15 @@ void signal_handler(int signal) {
     if (map_node) {
         map_node->Stop();
     }
+    simple_middleware::Logger::Info("Stopping Map Module...");
     exit(0);
 }
 
 int main() {
+    // 初始化日志 (写入 logs/map.log)
+    simple_middleware::Logger::GetInstance().Init("Map", "logs/map.log");
+    simple_middleware::Logger::Info("=== Simple Map Module Starting ===");
+    
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <google/protobuf/util/json_util.h>
 #include <simple_middleware/logger.hpp> // Add logger include
+#include <arpa/inet.h> // for htonl, ntohl
+#include <cstring> // for memcpy
 
 using namespace json11;
 
@@ -90,7 +92,65 @@ void PlanningComponent::RunLoop() {
                     json_string += ", \"type\": \"planning_trajectory\"}";
                 }
                 
-                middleware.publish("planning/trajectory", json_string);
+                // 【修复】UDP 包大小限制：MTU 通常是 1500 字节，减去 IP/UDP 头约 100 字节，实际可用约 1400 字节
+                // 但为了安全，我们使用 1200 字节作为分片大小
+                const size_t MAX_CHUNK_SIZE = 1200;
+                const size_t topic_overhead = 50; // topic 名称和分隔符的开销
+                const size_t chunk_header_size = 16; // 分片头：frame_id(4) + chunk_id(4) + total_chunks(4) + chunk_size(4)
+                const size_t effective_chunk_size = MAX_CHUNK_SIZE - topic_overhead - chunk_header_size;
+                
+                if (json_string.size() <= effective_chunk_size) {
+                    // 数据包足够小，直接发送
+                    middleware.publish("planning/trajectory", json_string);
+                } else {
+                    // 数据包太大，需要分片发送
+                    // 使用二进制分片协议：frame_id(4) + chunk_id(4) + total_chunks(4) + chunk_size(4) + chunk_data
+                    size_t total_chunks = (json_string.size() + effective_chunk_size - 1) / effective_chunk_size;
+                    static uint32_t frame_id_counter = 0;
+                    uint32_t frame_id = ++frame_id_counter;
+                    
+                    // 发送分片
+                    for (size_t chunk_id = 0; chunk_id < total_chunks; ++chunk_id) {
+                        size_t chunk_start = chunk_id * effective_chunk_size;
+                        size_t chunk_size = std::min(effective_chunk_size, json_string.size() - chunk_start);
+                        
+                        // 构造分片数据包：header + data
+                        std::string chunk_packet;
+                        chunk_packet.resize(16 + chunk_size);
+                        
+                        // 写入 header（大端序）
+                        uint32_t* header = reinterpret_cast<uint32_t*>(&chunk_packet[0]);
+                        header[0] = htonl(frame_id);
+                        header[1] = htonl(static_cast<uint32_t>(chunk_id));
+                        header[2] = htonl(static_cast<uint32_t>(total_chunks));
+                        header[3] = htonl(static_cast<uint32_t>(chunk_size));
+                        
+                        // 写入数据
+                        std::memcpy(&chunk_packet[16], json_string.data() + chunk_start, chunk_size);
+                        
+                        middleware.publish("planning/trajectory/chunk", chunk_packet);
+                        
+                        // 在分片之间添加延迟，避免阻塞其他数据发送
+                        if (chunk_id < total_chunks - 1) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1)); // 1毫秒延迟
+                        }
+                    }
+                    
+                    static int chunk_count = 0;
+                    if (chunk_count++ % 10 == 0) {
+                        simple_middleware::Logger::Info("Planning: Published trajectory in " + std::to_string(total_chunks) + " chunks");
+                    }
+                }
+                
+                static int pub_count = 0;
+                if (pub_count++ % 10 == 0 || pub_count <= 5) {
+                    simple_middleware::Logger::Info("Planning: Published trajectory with " + std::to_string(current_trajectory_.size()) + " points");
+                }
+            } else {
+                static int empty_count = 0;
+                if (empty_count++ % 100 == 0) {
+                    simple_middleware::Logger::Debug("Planning: Trajectory is empty, target_active=" + std::string(target_point_.active ? "true" : "false"));
+                }
             }
         }
 
@@ -102,7 +162,22 @@ void PlanningComponent::GenerateTrajectory() {
     std::lock_guard<std::mutex> lock(state_mutex_);
     current_trajectory_.clear();
 
-    if (!target_point_.active) return;
+    if (!target_point_.active) {
+        static int no_target_count = 0;
+        if (no_target_count++ % 100 == 0) {
+            simple_middleware::Logger::Debug("Planning: No target point active (count=" + std::to_string(no_target_count) + ")");
+        }
+        return;
+    }
+    
+    // 检查是否有有效的自车位置
+    if (current_pose_.x == 0.0 && current_pose_.y == 0.0) {
+        static int no_pose_count = 0;
+        if (no_pose_count++ % 100 == 0) {
+            simple_middleware::Logger::Warn("Planning: Current pose is (0,0), may not have received car status yet (count=" + std::to_string(no_pose_count) + ")");
+        }
+        // 即使位置是 (0,0)，也尝试生成轨迹（可能是真的在原点）
+    }
 
     double start_x = current_pose_.x;
     double start_y = current_pose_.y;
@@ -182,7 +257,15 @@ void PlanningComponent::GenerateTrajectory() {
 
     int num_points = std::min(50, std::max(10, static_cast<int>(dist * 2)));
 
-    for (int i = 0; i <= num_points; ++i) {
+    // 【修复2】确保规划线的第一个点就是当前自车位置
+    // 先添加起点（自车当前位置）
+    current_trajectory_.push_back({start_x, start_y, target_speed});
+    
+    simple_middleware::Logger::Info("Planning: Generating trajectory from (" + std::to_string(start_x) + ", " + std::to_string(start_y) 
+        + ") to (" + std::to_string(end_x) + ", " + std::to_string(end_y) + "), num_points=" + std::to_string(num_points));
+    
+    // 然后生成贝塞尔曲线上的点（从 i=1 开始，因为 i=0 已经添加了起点）
+    for (int i = 1; i <= num_points; ++i) {
         double t = static_cast<double>(i) / num_points;
         double u = 1 - t;
         double tt = t * t;
@@ -196,18 +279,23 @@ void PlanningComponent::GenerateTrajectory() {
         
         current_trajectory_.push_back({x, y, target_speed});
     }
+    
+    simple_middleware::Logger::Info("Planning: Generated trajectory with " + std::to_string(current_trajectory_.size()) + " points");
 }
 
 void PlanningComponent::OnControlMessage(const simple_middleware::Message& msg) {
+    simple_middleware::Logger::Info("Planning: Received control message, size=" + std::to_string(msg.data.size()));
+    
     std::string err;
     Json json = Json::parse(msg.data, err);
 
     if (!err.empty()) {
-        std::cerr << "[Planning] JSON parse error: " << err << std::endl;
+        simple_middleware::Logger::Error("Planning: JSON parse error: " + err);
         return;
     }
 
     std::string cmd = json["cmd"].string_value();
+    simple_middleware::Logger::Info("Planning: Parsed command: " + cmd);
     
     if (cmd == "set_target") {
         double x = json["x"].number_value();
@@ -217,7 +305,10 @@ void PlanningComponent::OnControlMessage(const simple_middleware::Message& msg) 
         target_point_.x = x;
         target_point_.y = y;
         target_point_.active = true;
-        simple_middleware::Logger::Info("New target received: " + std::to_string(x) + ", " + std::to_string(y));
+        simple_middleware::Logger::Info("Planning: New target received: (" + std::to_string(x) + ", " + std::to_string(y) 
+            + "), current_pose=(" + std::to_string(current_pose_.x) + ", " + std::to_string(current_pose_.y) + ")");
+    } else {
+        simple_middleware::Logger::Debug("Planning: Unknown command: " + cmd);
     }
 }
 

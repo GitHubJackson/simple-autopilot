@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <arpa/inet.h> // for ntohl
 
 using namespace json11;
 
@@ -49,10 +50,26 @@ void ControlComponent::Start() {
         this->OnSimulatorState(msg);
     });
 
-    // 订阅规划轨迹
-    middleware.subscribe("planning/trajectory", [this](const simple_middleware::Message& msg) {
+    // 订阅规划轨迹（完整消息）
+    int64_t traj_sub_id = middleware.subscribe("planning/trajectory", [this](const simple_middleware::Message& msg) {
+        simple_middleware::Logger::Info("Control: Received planning/trajectory message, size=" + std::to_string(msg.data.size()));
         this->OnPlanningTrajectory(msg);
     });
+    if (traj_sub_id >= 0) {
+        simple_middleware::Logger::Info("Control: Subscribed to planning/trajectory (ID: " + std::to_string(traj_sub_id) + ")");
+    } else {
+        simple_middleware::Logger::Error("Control: Failed to subscribe to planning/trajectory");
+    }
+    
+    // 订阅规划轨迹分片
+    int64_t chunk_sub_id = middleware.subscribe("planning/trajectory/chunk", [this](const simple_middleware::Message& msg) {
+        this->OnPlanningTrajectoryChunk(msg);
+    });
+    if (chunk_sub_id >= 0) {
+        simple_middleware::Logger::Info("Control: Subscribed to planning/trajectory/chunk (ID: " + std::to_string(chunk_sub_id) + ")");
+    } else {
+        simple_middleware::Logger::Error("Control: Failed to subscribe to planning/trajectory/chunk");
+    }
 
     thread_ = std::thread(&ControlComponent::RunLoop, this);
     status_reporter_->Start();
@@ -69,19 +86,34 @@ void ControlComponent::Stop() {
 
 void ControlComponent::Reset() {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    // 只重置内部状态，不重置 frame_data_ (因为现在它是只读的反馈)
+    // 重置内部状态
     target_point_.active = false;
     current_trajectory_.clear();
+    manual_control_mode_ = false;
+    waiting_for_trajectory_ = false; // 重置等待标志
+    // 重置控制输出，让车辆立即停止
+    current_car_state_.set_speed(0.0);
+    current_car_state_.set_steering_angle(0.0);
 }
 
 void ControlComponent::SetSpeed(double speed) {
-    // 这里的 SetSpeed 不再直接改状态，而是应该触发控制指令发送
-    // 但为了兼容现有逻辑，我们暂时只更新内部期望值，实际发送在 RunLoop
-    // current_car_state_.set_speed(speed); // 不，不能直接改状态
+    // 手动设置目标速度（覆盖自动控制）
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    // 限制速度范围
+    speed = std::max(0.0, std::min(speed, max_speed_));
+    current_car_state_.set_speed(speed);
+    manual_control_mode_ = true; // 设置为手动控制模式
+    simple_middleware::Logger::Info("Manual speed set to: " + std::to_string(speed) + " m/s");
 }
 
 void ControlComponent::SetSteering(double angle) {
-    // 同上
+    // 手动设置目标转向角（覆盖自动控制）
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    // 限制转向角范围
+    angle = std::max(-max_steer_, std::min(angle, max_steer_));
+    current_car_state_.set_steering_angle(angle);
+    manual_control_mode_ = true; // 设置为手动控制模式
+    simple_middleware::Logger::Info("Manual steering set to: " + std::to_string(angle) + " rad");
 }
 
 void ControlComponent::SetTarget(double x, double y) {
@@ -135,11 +167,30 @@ void ControlComponent::UpdateLookaheadPoint() {
 }
 
 void ControlComponent::ComputePurePursuitSteering(double dt) {
+    // 如果是手动控制模式，不执行自动控制算法
+    if (manual_control_mode_) {
+        return;
+    }
+    
+    // 【修复1】如果正在等待规划轨迹（收到 set_target 后），且没有轨迹，则等待
+    if (waiting_for_trajectory_ && current_trajectory_.empty()) {
+        // 等待 Planning 生成轨迹
+        current_car_state_.set_speed(0.0);
+        current_car_state_.set_steering_angle(0.0);
+        return;
+    }
+    
+    // 如果有轨迹，使用轨迹跟踪
     if (!current_trajectory_.empty()) {
         UpdateLookaheadPoint();
     }
 
-    if (!target_point_.active) return;
+    if (!target_point_.active) {
+        // 没有目标点，设置速度为0
+        current_car_state_.set_speed(0.0);
+        current_car_state_.set_steering_angle(0.0);
+        return;
+    }
 
     // 使用当前反馈状态
     double cx = current_car_state_.position().x();
@@ -159,30 +210,49 @@ void ControlComponent::ComputePurePursuitSteering(double dt) {
     
     if (dist < 1.0 && current_trajectory_.empty()) {
         // 到达目标，发送停车指令
-        // 这里只是更新期望状态，实际发送在 RunLoop
         current_car_state_.set_speed(0.0); 
+        current_car_state_.set_steering_angle(0.0);
         target_point_.active = false;
         simple_middleware::Logger::Info("Target reached!");
         return;
     }
     
+    // 计算转向角
     double steer = std::atan2(2.0 * wheelbase_ * std::sin(alpha), dist);
     steer = std::max(-max_steer_, std::min(steer, max_steer_));
     
+    // 设置目标速度：如果有目标点，使用自动速度
+    double target_speed = auto_engage_speed_;
+    if (dist < 5.0) {
+        // 接近目标时减速
+        target_speed = std::min(auto_engage_speed_, dist * 0.5);
+    }
+    
     // 这里我们把计算结果存入 current_car_state_ 作为"控制输出"暂存
     // 这是一个 hack，理想情况下应该有独立的 command 结构
+    current_car_state_.set_speed(target_speed);
     current_car_state_.set_steering_angle(steer);
 }
 
 void ControlComponent::RunLoop() {
     const double dt = 0.1; // 100ms
     auto& middleware = simple_middleware::PubSubMiddleware::getInstance();
+    static int log_counter = 0;
 
     while (running_) {
         // 1. 计算控制量
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             ComputePurePursuitSteering(dt);
+            
+            // 调试日志：每 50 次循环（5秒）输出一次状态
+            if (log_counter++ % 50 == 0) {
+                simple_middleware::Logger::Debug(
+                    "Control Loop: speed=" + std::to_string(current_car_state_.speed()) +
+                    ", steering=" + std::to_string(current_car_state_.steering_angle()) +
+                    ", manual_mode=" + std::string(manual_control_mode_ ? "true" : "false") +
+                    ", target_active=" + std::string(target_point_.active ? "true" : "false"));
+            }
             
             // 2. 发送控制指令给 Simulator
             senseauto::demo::ControlCommand cmd;
@@ -224,16 +294,51 @@ void ControlComponent::OnSimulatorState(const simple_middleware::Message& msg) {
 void ControlComponent::OnControlMessage(const simple_middleware::Message& msg) {
     std::string err;
     Json json = Json::parse(msg.data, err);
-    if (!err.empty()) return;
+    if (!err.empty()) {
+        simple_middleware::Logger::Warn("Failed to parse control message: " + err);
+        return;
+    }
     
-    std::string type = json["type"].string_value();
+    // 支持两种格式：前端可能发送 "cmd" 或 "type"
+    std::string cmd = json["cmd"].string_value();
+    if (cmd.empty()) {
+        cmd = json["type"].string_value();
+    }
     
-    if (type == "set_target") {
+    if (cmd == "set_target") {
         double x = json["x"].number_value();
         double y = json["y"].number_value();
         SetTarget(x, y);
-    } else if (type == "reset") {
+        manual_control_mode_ = false; // 设置目标点后切换到自动模式
+        // 【修复1】清空当前轨迹，设置等待标志，等待 Planning 生成新轨迹
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            current_trajectory_.clear();
+            waiting_for_trajectory_ = true; // 设置等待标志
+        }
+        simple_middleware::Logger::Info("Received set_target: (" + std::to_string(x) + ", " + std::to_string(y) + "), waiting for planning trajectory...");
+    } else if (cmd == "set_speed") {
+        double speed = json["value"].number_value();
+        SetSpeed(speed);
+        manual_control_mode_ = true; // 手动设置速度后切换到手动模式
+    } else if (cmd == "set_steer") {
+        double angle = json["value"].number_value();
+        SetSteering(angle);
+        manual_control_mode_ = true; // 手动设置转向后切换到手动模式
+    } else if (cmd == "reset") {
         Reset();
+        manual_control_mode_ = false;
+        simple_middleware::Logger::Info("Received reset command");
+    } else if (cmd == "stop") {
+        // 紧急停车
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        target_point_.active = false;
+        current_car_state_.set_speed(0.0);
+        current_car_state_.set_steering_angle(0.0);
+        manual_control_mode_ = false;
+        simple_middleware::Logger::Info("Received stop command");
+    } else if (!cmd.empty()) {
+        simple_middleware::Logger::Debug("Unknown control command: " + cmd);
     }
 }
 
@@ -242,13 +347,21 @@ void ControlComponent::OnControlMessage(const simple_middleware::Message& msg) {
 
 
 void ControlComponent::OnPlanningTrajectory(const simple_middleware::Message& msg) {
+    simple_middleware::Logger::Info("Control: OnPlanningTrajectory called, data_size=" + std::to_string(msg.data.size()));
+    
     std::string err;
     Json json = Json::parse(msg.data, err);
-    if (!err.empty()) return;
+    if (!err.empty()) {
+        simple_middleware::Logger::Error("Control: Failed to parse planning/trajectory JSON: " + err);
+        return;
+    }
+    
+    simple_middleware::Logger::Info("Control: Parsed JSON successfully, checking trajectory array...");
     
     // 解析 planning/trajectory 消息 (FrameData 结构)
     // 注意：planning 发送的也是 FrameData 结构的 JSON
     if (json["trajectory"].is_array()) {
+        simple_middleware::Logger::Info("Control: Found trajectory array with " + std::to_string(json["trajectory"].array_items().size()) + " points");
         std::lock_guard<std::mutex> lock(state_mutex_);
         current_trajectory_.clear();
         double target_v = -1.0;
@@ -265,7 +378,8 @@ void ControlComponent::OnPlanningTrajectory(const simple_middleware::Message& ms
 // ...
 
         if (!current_trajectory_.empty()) {
-            // 收到新轨迹，激活自动驾驶模式
+            // 收到新轨迹，清除等待标志，激活自动驾驶模式
+            waiting_for_trajectory_ = false; // 收到轨迹后，清除等待标志
             if (target_v >= 0) {
                 // 如果轨迹中包含速度信息 (来自 Planning 的 ACC 逻辑)，直接应用
                 current_car_state_.set_speed(target_v);
@@ -278,5 +392,96 @@ void ControlComponent::OnPlanningTrajectory(const simple_middleware::Message& ms
             // 使用 Logger
             simple_middleware::Logger::Info("Received trajectory with " + std::to_string(current_trajectory_.size()) + " points. Target V: " + std::to_string(target_v));
         }
+    }
+}
+
+void ControlComponent::OnPlanningTrajectoryChunk(const simple_middleware::Message& msg) {
+    if (msg.data.size() < 16) {
+        static int error_count = 0;
+        if (error_count++ % 100 == 0) {
+            simple_middleware::Logger::Warn("Control: Trajectory chunk too small: " + std::to_string(msg.data.size()) + " bytes");
+        }
+        return;
+    }
+    
+    const uint32_t* header = reinterpret_cast<const uint32_t*>(msg.data.data());
+    uint32_t frame_id = ntohl(header[0]);
+    uint32_t chunk_id = ntohl(header[1]);
+    uint32_t total_chunks = ntohl(header[2]);
+    uint32_t chunk_size = ntohl(header[3]);
+    
+    if (msg.data.size() != 16 + chunk_size) {
+        static int error_count = 0;
+        if (error_count++ % 100 == 0) {
+            simple_middleware::Logger::Warn("Control: Trajectory chunk size mismatch: expected " + std::to_string(16 + chunk_size) 
+                + ", got " + std::to_string(msg.data.size()));
+        }
+        return;
+    }
+    
+    // 提取分片数据
+    std::string chunk_data = msg.data.substr(16, chunk_size);
+    
+    bool should_process = false;
+    std::string full_data;
+    
+    {
+        std::lock_guard<std::mutex> lock(trajectory_chunk_mutex_);
+        
+        // 获取或创建分片缓冲区
+        auto& buffer = trajectory_chunk_buffers_[frame_id];
+        buffer.frame_id = frame_id;
+        buffer.total_chunks = total_chunks;
+        buffer.last_update = std::chrono::steady_clock::now();
+        
+        // 确保 chunks 数组大小足够
+        if (buffer.chunks.size() < total_chunks) {
+            buffer.chunks.resize(total_chunks);
+        }
+        
+        // 存储分片数据
+        if (chunk_id < total_chunks) {
+            buffer.chunks[chunk_id] = chunk_data;
+        }
+        
+        // 检查是否所有分片都已收到
+        bool all_received = true;
+        for (size_t i = 0; i < total_chunks; ++i) {
+            if (buffer.chunks[i].empty()) {
+                all_received = false;
+                break;
+            }
+        }
+        
+        if (all_received) {
+            // 重组完整数据
+            full_data.reserve(total_chunks * chunk_data.size());
+            for (const auto& chunk : buffer.chunks) {
+                full_data += chunk;
+            }
+            
+            should_process = true;
+            trajectory_chunk_buffers_.erase(frame_id);
+        }
+        
+        // 清理超时的分片缓冲区（1秒超时）
+        auto now = std::chrono::steady_clock::now();
+        for (auto it = trajectory_chunk_buffers_.begin(); it != trajectory_chunk_buffers_.end();) {
+            if (now - it->second.last_update > std::chrono::seconds(1)) {
+                simple_middleware::Logger::Warn("Control: Trajectory chunk timeout for frame " + std::to_string(it->first));
+                it = trajectory_chunk_buffers_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    
+    // 在锁外处理完整数据
+    if (should_process) {
+        simple_middleware::Logger::Info("Control: Reassembled trajectory from " + std::to_string(total_chunks) + " chunks");
+        // 构造完整的 Message 并调用 OnPlanningTrajectory
+        simple_middleware::Message full_msg("planning/trajectory", full_data);
+        full_msg.timestamp = msg.timestamp;
+        OnPlanningTrajectory(full_msg);
     }
 }

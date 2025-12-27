@@ -1,0 +1,52 @@
+# 开发模式 Dockerfile - 包含更多开发工具
+FROM ubuntu:22.04
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Shanghai
+WORKDIR /workspace
+
+# 安装开发工具和依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    curl \
+    pkg-config \
+    ninja-build \
+    autoconf \
+    automake \
+    libtool \
+    ca-certificates \
+    vim \
+    nano \
+    gdb \
+    valgrind \
+    strace \
+    htop \
+    tree \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置环境变量
+ENV INSTALL_DIR=/workspace/install
+ENV PATH="${INSTALL_DIR}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${INSTALL_DIR}/lib:${LD_LIBRARY_PATH}"
+
+# 复制脚本
+COPY scripts/ /workspace/scripts/
+RUN chmod +x /workspace/scripts/*.sh
+
+# 创建目录
+RUN mkdir -p /workspace/install
+
+# 复制构建脚本
+COPY build_all.sh /workspace/build_all.sh
+RUN chmod +x /workspace/build_all.sh
+
+# 复制项目（开发模式，代码变化频繁）
+COPY . /workspace/
+
+# 默认进入交互式 shell
+CMD ["/bin/bash"]
+

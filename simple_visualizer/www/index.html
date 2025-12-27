@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>SenseAuto Visualizer</title>
+    <title>Autopilot Visualizer</title>
     <style>
       body {
         font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
@@ -240,8 +240,8 @@
           try {
             if (typeof event.data === "string") {
               const msg = JSON.parse(event.data);
-              if (msg.type === "frame_data" || msg.frameId) {
-                // check frameId for protobuf generated json
+              if (msg.type === "frame_data" || msg.frame_id !== undefined) {
+                // 后端发送的是 frame_id (下划线)，不是 frameId (驼峰)
                 handleFrameData(msg);
               } else if (msg.type === "planning_trajectory") {
                 // 处理 Planning 轨迹
@@ -289,8 +289,8 @@
       }
 
       function handleFrameData(data) {
-        // Handle Protobuf JSON naming (camelCase)
-        const car = data.carState || {};
+        // 后端发送的是下划线命名 (car_state)，不是驼峰命名 (carState)
+        const car = data.car_state || {};
         const pos = car.position || { x: 0, y: 0, z: 0 };
 
         carState = {
@@ -298,11 +298,11 @@
           y: pos.y || 0,
           heading: car.heading || 0,
           speed: car.speed || 0,
-          steering: car.steeringAngle || 0,
+          steering: car.steering_angle || 0,
         };
 
         obstacles = data.obstacles || [];
-        frameId = data.frameId || 0;
+        frameId = data.frame_id || 0;
 
         updateUI();
         draw();

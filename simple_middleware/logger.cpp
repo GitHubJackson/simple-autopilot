@@ -3,6 +3,10 @@
 #include <iomanip>
 #include <sstream>
 #include <sys/stat.h>
+#include <filesystem>
+#include <cstring>
+#include <unistd.h>
+#include <cerrno>
 
 namespace simple_middleware {
 
@@ -17,12 +21,38 @@ void Logger::Init(const std::string& module_name, const std::string& log_file_pa
     module_name_ = module_name;
     
     if (!log_file_path.empty()) {
-        // 尝试创建目录 (简单 hack，假设只有一级 logs 目录)
-        // mkdir("logs", 0777); 
+        // 自动创建日志目录（如果不存在）
+        try {
+            std::filesystem::path log_path(log_file_path);
+            std::filesystem::path log_dir = log_path.parent_path();
+            
+            if (!log_dir.empty()) {
+                if (!std::filesystem::exists(log_dir)) {
+                    std::filesystem::create_directories(log_dir);
+                }
+            }
+        } catch (const std::exception& e) {
+            // 如果 filesystem 不可用，尝试使用 mkdir
+            std::string log_dir = log_file_path.substr(0, log_file_path.find_last_of("/\\"));
+            if (!log_dir.empty()) {
+                // 递归创建目录（如果父目录不存在）
+                size_t pos = 0;
+                while ((pos = log_dir.find('/', pos + 1)) != std::string::npos) {
+                    std::string sub_dir = log_dir.substr(0, pos);
+                    if (!sub_dir.empty()) {
+                        mkdir(sub_dir.c_str(), 0777);
+                    }
+                }
+                mkdir(log_dir.c_str(), 0777);
+            }
+        }
         
         log_file_.open(log_file_path, std::ios::out | std::ios::app);
         if (!log_file_.is_open()) {
-            std::cerr << "[Logger] Failed to open log file: " << log_file_path << std::endl;
+            char cwd[1024];
+            std::string cwd_str = (getcwd(cwd, sizeof(cwd)) != nullptr) ? cwd : "unknown";
+            std::cerr << "[Logger] ERROR: Failed to open log file: " << log_file_path 
+                      << " (current working directory: " << cwd_str << ")" << std::endl;
         }
     }
     initialized_ = true;

@@ -57,12 +57,64 @@ demos/
 
 ### 1. 编译
 
+#### 方式 A：使用 Docker 编译（推荐，跨平台）
+
+使用 Docker 可以确保跨平台一致性，无需手动安装依赖：
+
+```bash
+# 构建 Docker 镜像（首次使用或依赖更新时需要）
+./build_docker.sh build
+
+# 在容器中编译整个项目
+./build_docker.sh compile
+
+# 或者使用 docker-compose
+docker-compose up builder
+
+# 只编译指定模块
+./build_docker.sh module simple_control
+
+# 进入容器进行交互式调试
+./build_docker.sh shell
+```
+
+**Docker 方式的优势：**
+
+- ✅ 跨平台支持（Windows、macOS、Linux）
+- ✅ 环境一致性，避免依赖问题
+- ✅ 自动处理所有依赖（CMake、Protobuf 等）
+- ✅ 构建产物保留在主机上，可直接使用
+- ✅ 支持增量编译，Docker 层缓存加速构建
+
+**Docker 使用技巧：**
+
+```bash
+# 开发模式（包含调试工具）
+DOCKERFILE=Dockerfile.dev ./build_docker.sh build
+DOCKERFILE=Dockerfile.dev ./build_docker.sh shell
+
+# 使用自定义镜像标签
+IMAGE_TAG=v1.0 ./build_docker.sh build
+
+# 查看帮助
+./build_docker.sh help
+```
+
+#### 方式 B：本地编译
+
 项目提供了一键编译脚本，会自动处理所有模块的依赖关系：
 
 ```bash
-cd demos
+cd simple-autopilot
 ./build_all.sh
 ```
+
+**本地编译要求：**
+
+- CMake (>= 3.10)
+- C++17 编译器
+- Protobuf（脚本会自动安装）
+- Pthread
 
 ### 2. 运行
 

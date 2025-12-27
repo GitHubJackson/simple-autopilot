@@ -26,7 +26,8 @@ public:
     
     // 更新外部数据
     void UpdateFromSimulator(const senseauto::demo::FrameData& sim_frame);
-    void UpdateCameraImage(const std::string& ppm_data);
+    bool UpdateCameraImage(const std::string& ppm_data);
+    bool UpdateCameraImageRGB(const std::string& rgb_data, int width, int height); // 新增：处理纯 RGB 数据
     void UpdateDetections(const senseauto::demo::Detection2DArray& dets);
     
     // 获取处理后带框的图像数据 (RGB Buffer)

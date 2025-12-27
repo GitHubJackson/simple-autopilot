@@ -35,5 +35,18 @@ rm -rf "$INSTALL_DIR/bin/visualizer_server"
 rm -rf "$INSTALL_DIR/bin/daemon_node"
 rm -rf "$INSTALL_DIR/bin/sensor_node"
 
+# 清理各个模块的日志文件
+echo "Cleaning log files..."
+rm -f "${PROJECT_ROOT}/simple_control/logs/*.log"
+rm -f "${PROJECT_ROOT}/simple_planning/logs/*.log"
+rm -f "${PROJECT_ROOT}/simple_perception/logs/*.log"
+rm -f "${PROJECT_ROOT}/simple_simulator/logs/*.log"
+rm -f "${PROJECT_ROOT}/simple_sensor/logs/*.log"
+rm -f "${PROJECT_ROOT}/simple_visualizer/logs/*.log"
+rm -f "${PROJECT_ROOT}/simple_daemon/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_map/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/system_monitor/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_middleware/logs/*.log" 2>/dev/null || true
+
 echo "=== Clean Complete ==="
 

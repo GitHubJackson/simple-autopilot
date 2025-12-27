@@ -7,10 +7,13 @@
 #include <json11.hpp>
 #include <memory>
 #include <set>
+#include <unordered_map>
 #include <mutex>
 #include <thread>
 #include <atomic>
 #include <string>
+#include <chrono>
+#include <vector>
 
 #include "../component/visualizer_component.hpp" // New
 
@@ -48,6 +51,8 @@ private:
     void OnMiddlewareMessage(const simple_middleware::Message& msg);
     void OnSystemStatus(const simple_middleware::Message& msg);
     void OnCameraData(const simple_middleware::Message& msg); // New
+    void OnCameraChunk(const simple_middleware::Message& msg);
+    void OnTrajectoryChunk(const simple_middleware::Message& msg); // New: 处理分片数据
     void OnDetectionData(const simple_middleware::Message& msg); // New
 
 private:
@@ -71,4 +76,15 @@ private:
     std::atomic<bool> running_;
     
     const std::string document_root_ = "./www";
+    
+    // 分片重组相关
+    struct ChunkBuffer {
+        uint32_t frame_id;
+        uint32_t total_chunks;
+        std::vector<std::string> chunks; // 存储每个分片的数据
+        std::chrono::steady_clock::time_point last_update;
+    };
+    std::unordered_map<uint32_t, ChunkBuffer> chunk_buffers_; // frame_id -> ChunkBuffer
+    std::mutex chunk_mutex_;
+    static constexpr int CHUNK_TIMEOUT_MS = 1000; // 分片超时时间（毫秒）
 };

@@ -136,11 +136,31 @@ public:
 
     // 画空心矩形
     void DrawRect(int x, int y, int w, int h, Pixel color, int thickness = 2) {
+        // 确保坐标在图像范围内
+        x = std::max(0, std::min(x, width - 1));
+        y = std::max(0, std::min(y, height - 1));
+        w = std::max(1, std::min(w, width - x));
+        h = std::max(1, std::min(h, height - y));
+        
         for (int t = 0; t < thickness; ++t) {
-            DrawLine(x, y+t, x+w, y+t, color);         // Top
-            DrawLine(x, y+h-t, x+w, y+h-t, color);     // Bottom
-            DrawLine(x+t, y, x+t, y+h, color);         // Left
-            DrawLine(x+w-t, y, x+w-t, y+h, color);     // Right
+            // 确保坐标不超出边界
+            int y_top = std::min(y + t, height - 1);
+            int y_bottom = std::max(y + h - t - 1, 0);
+            int x_left = std::min(x + t, width - 1);
+            int x_right = std::min(x + w - t - 1, width - 1);
+            
+            if (y_top >= 0 && y_top < height) {
+                DrawLine(x, y_top, x + w - 1, y_top, color);         // Top
+            }
+            if (y_bottom >= 0 && y_bottom < height) {
+                DrawLine(x, y_bottom, x + w - 1, y_bottom, color);     // Bottom
+            }
+            if (x_left >= 0 && x_left < width) {
+                DrawLine(x_left, y, x_left, y + h - 1, color);         // Left
+            }
+            if (x_right >= 0 && x_right < width) {
+                DrawLine(x_right, y, x_right, y + h - 1, color);     // Right
+            }
         }
     }
 
