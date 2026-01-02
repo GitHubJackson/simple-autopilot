@@ -5,14 +5,15 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # 定义要启动的模块和对应的命令
 MODULES=(
-    "System Monitor:./autopilot status"
-    "Perception:./simple_perception/build/perception_node"
-    "Control:./simple_control/build/control_server"
-    "Planning:./simple_planning/build/planning_node"
-    "Visualizer:./simple_visualizer/build/server"
     "Daemon:./simple_daemon/build/daemon_node"
-    "Simulator:./simple_simulator/build/simulator_node"
+    "System Monitor:./system_monitor/build/monitor"
+    "Map:./simple_map/build/map_server"
+    "Simulator:./simple_simulator/build/bin/simulator_node"
     "Sensor:./simple_sensor/build/sensor_node"
+    "Perception:./simple_perception/build/perception_node"
+    "Planning:./simple_planning/build/planning_node"
+    "Control:./simple_control/build/control_server"
+    "Visualizer:./simple_visualizer/build/server"
 )
 
 echo "=== 正在启动 AutoPilot 演示系统 ==="

@@ -74,7 +74,8 @@ void PubSubMiddleware::initUdpSocket() {
     addr.sin_addr.s_addr = htonl(INADDR_ANY); // 监听所有网卡
 
     if (bind(udp_socket_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        LOG_ERROR("PubSubMiddleware") << "绑定端口失败";
+        LOG_ERROR("PubSubMiddleware") << "绑定端口失败 (端口: " << UDP_PORT 
+            << ", 错误: " << strerror(errno) << ", errno: " << errno << ")";
         close(udp_socket_fd_);
         udp_socket_fd_ = -1;
         return;
@@ -120,7 +121,7 @@ void PubSubMiddleware::udpReceiveLoop() {
             
             // 【简易协议】自定义协议格式 topic|data
             size_t sep_pos = raw_data.find('|');
-            if (sep_pos != std::string::npos && sep_pos < len) {
+            if (sep_pos != std::string::npos && sep_pos < static_cast<size_t>(len)) {
                 std::string topic = raw_data.substr(0, sep_pos);
                 std::string data = raw_data.substr(sep_pos + 1);
                 

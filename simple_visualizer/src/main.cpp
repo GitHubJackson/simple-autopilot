@@ -8,7 +8,7 @@
 #include <signal.h>
 #include <simple_middleware/logger.hpp> // Add logger include
 
-#define PORT "8082"
+#define PORT "8080"
 
 int main(int argc, char *argv[]) {
     // 初始化日志 (写入 logs/visualizer.log)

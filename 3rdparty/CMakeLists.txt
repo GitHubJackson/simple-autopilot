@@ -23,7 +23,47 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/civetweb/CMakeLists.txt")
         civetweb-cpp
         civetweb-c-library
     )
-    message(STATUS "3rdparty: CivetWeb configured")
+    message(STATUS "3rdparty: CivetWeb configured from local source")
+else()
+    # 尝试查找系统安装的 CivetWeb
+    find_path(CIVETWEB_INCLUDE_DIR CivetServer.h
+        PATHS
+        /usr/include
+        /usr/local/include
+        /opt/homebrew/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/civetweb/include
+    )
+    
+    find_library(CIVETWEB_CPP_LIB civetweb-cpp
+        PATHS
+        /usr/lib
+        /usr/local/lib
+        /opt/homebrew/lib
+    )
+    
+    find_library(CIVETWEB_C_LIB civetweb-c-library
+        PATHS
+        /usr/lib
+        /usr/local/lib
+        /opt/homebrew/lib
+    )
+    
+    if(CIVETWEB_INCLUDE_DIR AND CIVETWEB_CPP_LIB AND CIVETWEB_C_LIB)
+        add_library(3rdparty_civetweb INTERFACE)
+        target_include_directories(3rdparty_civetweb INTERFACE ${CIVETWEB_INCLUDE_DIR})
+        target_link_libraries(3rdparty_civetweb INTERFACE ${CIVETWEB_CPP_LIB} ${CIVETWEB_C_LIB})
+        message(STATUS "3rdparty: CivetWeb configured from system installation")
+        message(STATUS "  Include: ${CIVETWEB_INCLUDE_DIR}")
+        message(STATUS "  Libraries: ${CIVETWEB_CPP_LIB} ${CIVETWEB_C_LIB}")
+    else()
+        message(FATAL_ERROR "CivetWeb not found! Please either:\n"
+            "  1. Clone CivetWeb to 3rdparty/civetweb:\n"
+            "     cd 3rdparty && git clone https://github.com/civetweb/civetweb.git\n"
+            "  2. Install CivetWeb system-wide (e.g., apt-get install libcivetweb-dev)\n"
+            "     Include dir: ${CIVETWEB_INCLUDE_DIR}\n"
+            "     C++ lib: ${CIVETWEB_CPP_LIB}\n"
+            "     C lib: ${CIVETWEB_C_LIB}")
+    endif()
 endif()
 
 # --- json11 ---

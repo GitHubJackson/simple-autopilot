@@ -16,6 +16,7 @@ TARGETS=(
     "simple_daemon/build/daemon_node"
     "simple_simulator/build/bin/simulator_node"
     "simple_sensor/build/sensor_node"
+    "simple_map/build/map_server"
     "autopilot status"  # 匹配 ./autopilot status 命令
 )
 

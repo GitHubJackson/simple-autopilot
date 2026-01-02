@@ -126,7 +126,7 @@ private:
     struct sockaddr_in broadcast_addr_;
     std::thread receiver_thread_;
     std::atomic<bool> running_{false};
-    static constexpr int UDP_PORT = 12345;
+    static constexpr int UDP_PORT = 18888;  // 改为不常用端口，避免冲突
 };
 
 }  // namespace simple_middleware

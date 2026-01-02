@@ -27,7 +27,7 @@ rm -rf "$INSTALL_DIR/include/common_msgs"
 rm -rf "$INSTALL_DIR/include/simple_middleware"
 rm -rf "$INSTALL_DIR/lib/libcommon_msgs_lib*"
 rm -rf "$INSTALL_DIR/lib/libsimple_middleware_lib*"
-rm -rf "$INSTALL_DIR/bin/system_monitor"
+rm -rf "$INSTALL_DIR/bin/monitor"
 rm -rf "$INSTALL_DIR/bin/map_server"
 rm -rf "$INSTALL_DIR/bin/planning_node"
 rm -rf "$INSTALL_DIR/bin/control_node"
@@ -35,14 +35,16 @@ rm -rf "$INSTALL_DIR/bin/visualizer_server"
 rm -rf "$INSTALL_DIR/bin/daemon_node"
 rm -rf "$INSTALL_DIR/bin/sensor_node"
 
-# 清理各个模块的日志文件
+# 清理日志文件（项目根目录的 logs/ 目录）
 echo "Cleaning log files..."
-rm -f "${PROJECT_ROOT}/simple_control/logs/*.log"
-rm -f "${PROJECT_ROOT}/simple_planning/logs/*.log"
-rm -f "${PROJECT_ROOT}/simple_perception/logs/*.log"
-rm -f "${PROJECT_ROOT}/simple_simulator/logs/*.log"
-rm -f "${PROJECT_ROOT}/simple_sensor/logs/*.log"
-rm -f "${PROJECT_ROOT}/simple_visualizer/logs/*.log"
+rm -f "${PROJECT_ROOT}/logs/*.log" 2>/dev/null || true
+# 也清理可能存在的各模块目录下的日志（兼容旧版本）
+rm -f "${PROJECT_ROOT}/simple_control/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_planning/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_perception/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_simulator/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_sensor/logs/*.log" 2>/dev/null || true
+rm -f "${PROJECT_ROOT}/simple_visualizer/logs/*.log" 2>/dev/null || true
 rm -f "${PROJECT_ROOT}/simple_daemon/logs/*.log" 2>/dev/null || true
 rm -f "${PROJECT_ROOT}/simple_map/logs/*.log" 2>/dev/null || true
 rm -f "${PROJECT_ROOT}/system_monitor/logs/*.log" 2>/dev/null || true

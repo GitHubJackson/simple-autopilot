@@ -1,4 +1,10 @@
 #!/bin/bash
+###
+ # @Desc: 
+ # @Author: JacksonZhou
+ # @Date: 2025/12/29
+ # @LastEditTime: 2025/12/29
+### 
 
 # 获取项目根目录绝对路径
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -56,17 +62,18 @@ start_module() {
 
 # 启动各个核心模块
 # 注意：System Monitor 通常是终端交互界面，不适合后台运行，故此处不启动
-start_module "perception"  "./simple_perception/build/perception_node"
-start_module "control"     "./simple_control/build/control_server"
-start_module "planning"    "./simple_planning/build/planning_node"
-start_module "visualizer"  "./simple_visualizer/build/server"
 start_module "daemon"      "./simple_daemon/build/daemon_node"
+start_module "map"         "./simple_map/build/map_server"
 start_module "simulator"   "./simple_simulator/build/bin/simulator_node"
 start_module "sensor"      "./simple_sensor/build/sensor_node"
+start_module "perception"  "./simple_perception/build/perception_node"
+start_module "planning"    "./simple_planning/build/planning_node"
+start_module "control"     "./simple_control/build/control_server"
+start_module "visualizer"  "./simple_visualizer/build/server"
 
 echo ""
 echo "=== 系统运行中 ==="
-echo "在浏览器访问 http://localhost:8082 查看效果"
+echo "在浏览器访问 http://localhost:8080 查看效果"
 echo "按 [Ctrl+C] 停止所有进程"
 
 # 挂起脚本，等待信号
