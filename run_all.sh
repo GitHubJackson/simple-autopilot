@@ -11,6 +11,7 @@ MODULES=(
     "Simulator:./simple_simulator/build/bin/simulator_node"
     "Sensor:./simple_sensor/build/sensor_node"
     "Perception:./simple_perception/build/perception_node"
+    "Prediction:./simple_prediction/build/prediction_node"
     "Planning:./simple_planning/build/planning_node"
     "Control:./simple_control/build/control_server"
     "Visualizer:./simple_visualizer/build/server"

@@ -53,7 +53,10 @@ private:
     void OnCameraData(const simple_middleware::Message& msg); // New
     void OnCameraChunk(const simple_middleware::Message& msg);
     void OnTrajectoryChunk(const simple_middleware::Message& msg); // New: 处理分片数据
+    void OnMapChunk(const simple_middleware::Message& msg); // New: 处理地图数据分片
+    void OnPredictionChunk(const simple_middleware::Message& msg); // New: 处理预测轨迹分片
     void OnDetectionData(const simple_middleware::Message& msg); // New
+    void OnPredictionTrajectories(const simple_middleware::Message& msg); // New: 处理预测轨迹
 
 private:
     std::unique_ptr<CivetServer> civet_server_;

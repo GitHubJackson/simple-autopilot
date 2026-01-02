@@ -9,6 +9,7 @@ echo "=== 正在停止 AutoPilot 系统所有进程 ==="
 # 使用相对路径片段以提高匹配准确性，防止误杀其他名为 server 的进程
 TARGETS=(
     "simple_perception/build/perception_node"
+    "simple_prediction/build/prediction_node"
     "simple_control/build/control_server"
     "simple_planning/build/planning_node"
     "simple_visualizer/build/server"

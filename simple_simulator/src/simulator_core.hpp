@@ -8,6 +8,7 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <unordered_map>
 
 class SimulatorCore {
 public:
@@ -48,5 +49,17 @@ private:
     
     // 车辆物理参数
     const double WHEELBASE = 2.8;
+    
+    // 动态障碍物状态（用于模拟移动障碍物）
+    struct DynamicObstacle {
+        double vx;  // x方向速度 (m/s)
+        double vy;  // y方向速度 (m/s)
+        double speed;  // 总速度 (m/s)
+        double heading;  // 运动方向 (rad)
+    };
+    std::unordered_map<int32_t, DynamicObstacle> dynamic_obstacles_;
+    
+    // 更新动态障碍物位置
+    void UpdateDynamicObstacles(double dt);
 };
 

@@ -108,6 +108,19 @@ else
 fi
 cd ../..
 
+echo "=== 5.6 编译 Prediction 模块 ==="
+mkdir -p simple_prediction/build
+cd simple_prediction/build
+cmake ..
+make -j4
+if [ $? -eq 0 ]; then
+    echo "Prediction 模块编译成功！"
+else
+    echo "Prediction 模块编译失败！"
+    exit 1
+fi
+cd ../..
+
 echo "=== 6. 编译 Control 模块 ==="
 mkdir -p simple_control/build
 cd simple_control/build

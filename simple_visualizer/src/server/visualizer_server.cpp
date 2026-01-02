@@ -95,6 +95,36 @@ void VisualizerServer::BroadcastMessage(const std::string& message) {
     if (message.empty()) return;
 
     std::lock_guard<std::mutex> lock(conn_mutex_);
+    
+    // 添加调试日志（仅对地图和预测数据）
+    static int broadcast_count = 0;
+    static int map_broadcast_count = 0;
+    static int pred_broadcast_count = 0;
+    
+    bool is_map = (message.find("\"type\"") != std::string::npos && 
+                   message.find("\"map_data\"") != std::string::npos);
+    bool is_pred = (message.find("\"type\"") != std::string::npos && 
+                    message.find("\"prediction_trajectories\"") != std::string::npos);
+    
+    if (is_map) {
+        if (map_broadcast_count++ % 10 == 0 || map_broadcast_count == 1) {
+            Log("INFO", "BroadcastMessage: Sending map_data to " + std::to_string(connections_.size()) 
+                + " connections, size=" + std::to_string(message.size()) + " bytes");
+        }
+    } else if (is_pred) {
+        if (pred_broadcast_count++ % 10 == 0 || pred_broadcast_count == 1) {
+            Log("INFO", "BroadcastMessage: Sending prediction_trajectories to " + std::to_string(connections_.size()) 
+                + " connections, size=" + std::to_string(message.size()) + " bytes");
+        }
+    }
+    
+    if (connections_.empty()) {
+        if (broadcast_count++ % 100 == 0) {
+            Log("WARN", "BroadcastMessage: No WebSocket connections available!");
+        }
+        return;
+    }
+    
     for (auto conn : connections_) {
         mg_websocket_write(conn, MG_WEBSOCKET_OPCODE_TEXT, message.c_str(), message.size());
     }
@@ -167,10 +197,59 @@ void VisualizerServer::StartThreads() {
     middleware.subscribe("planning/trajectory/chunk", [this](const simple_middleware::Message& msg) {
         this->OnTrajectoryChunk(msg);
     });
+    
+    // 订阅地图数据分片
+    middleware.subscribe("visualizer/map/chunk", [this](const simple_middleware::Message& msg) {
+        this->OnMapChunk(msg);
+    });
+    
+    // 订阅预测轨迹分片
+    middleware.subscribe("prediction/trajectories/chunk", [this](const simple_middleware::Message& msg) {
+        this->OnPredictionChunk(msg);
+    });
+    
+    // 订阅预测轨迹
+    int64_t pred_sub_id = middleware.subscribe("prediction/trajectories", [this](const simple_middleware::Message& msg) {
+        static int recv_count = 0;
+        if (recv_count++ % 10 == 0 || recv_count == 1) {
+            Log("DEBUG", "Visualizer: Received prediction/trajectories message, size=" + std::to_string(msg.data.size()));
+        }
+        this->OnPredictionTrajectories(msg);
+    });
+    if (pred_sub_id >= 0) {
+        Log("INFO", "Subscribed to prediction/trajectories (ID: " + std::to_string(pred_sub_id) + ")");
+    } else {
+        Log("ERROR", "Failed to subscribe to prediction/trajectories");
+    }
 
-    middleware.subscribe("visualizer/map", [this](const simple_middleware::Message& msg) {
+    int64_t map_sub_id = middleware.subscribe("visualizer/map", [this](const simple_middleware::Message& msg) {
+        static int recv_count = 0;
+        recv_count++;
+        // 总是打印前几次，然后每10次打印一次
+        if (recv_count <= 5 || recv_count % 10 == 0) {
+            Log("INFO", "Visualizer: Received visualizer/map message #" + std::to_string(recv_count) 
+                + ", size=" + std::to_string(msg.data.size()) + " bytes");
+            // 打印前200个字符用于调试
+            if (msg.data.size() > 0) {
+                std::string preview = msg.data.substr(0, std::min(200UL, msg.data.size()));
+                Log("DEBUG", "Map message preview: " + preview + "...");
+                // 检查是否包含关键字段
+                if (msg.data.find("\"lanes\"") == std::string::npos) {
+                    Log("WARN", "Map message does not contain 'lanes' field!");
+                } else {
+                    Log("DEBUG", "Map message contains 'lanes' field");
+                }
+            } else {
+                Log("WARN", "Map message is empty!");
+            }
+        }
         this->OnMiddlewareMessage(msg); 
     });
+    if (map_sub_id >= 0) {
+        Log("INFO", "Subscribed to visualizer/map (ID: " + std::to_string(map_sub_id) + ")");
+    } else {
+        Log("ERROR", "Failed to subscribe to visualizer/map");
+    }
 
     middleware.subscribe("system/status", [this](const simple_middleware::Message& msg) {
         this->OnSystemStatus(msg);
@@ -211,7 +290,46 @@ void VisualizerServer::StartThreads() {
 
 void VisualizerServer::OnMiddlewareMessage(const simple_middleware::Message& msg) {
     if (!running_) return;
+    
+    // 添加调试日志（仅对地图数据，避免日志过多）
+    static int map_msg_count = 0;
+    static int other_msg_count = 0;
+    
+    // 通过消息内容判断是否是地图数据（包含 "type":"map_data"）
+    if (msg.data.find("\"type\"") != std::string::npos && 
+        msg.data.find("\"map_data\"") != std::string::npos) {
+        map_msg_count++;
+        // 总是打印前几次，然后每10次打印一次
+        if (map_msg_count <= 5 || map_msg_count % 10 == 0) {
+            Log("INFO", "OnMiddlewareMessage: Received map data #" + std::to_string(map_msg_count) 
+                + ", size=" + std::to_string(msg.data.size()) + " bytes");
+            // 打印JSON预览用于调试
+            if (map_msg_count <= 3 && msg.data.size() > 0) {
+                std::string preview = msg.data.substr(0, std::min(300UL, msg.data.size()));
+                Log("DEBUG", "Map JSON preview: " + preview + "...");
+                // 检查是否包含lanes字段
+                if (msg.data.find("\"lanes\"") == std::string::npos) {
+                    Log("WARN", "Map data does not contain 'lanes' field!");
+                } else {
+                    Log("DEBUG", "Map data contains 'lanes' field");
+                }
+            }
+        }
+    } else {
+        if (other_msg_count++ % 100 == 0) {
+            // 其他消息只偶尔打印
+        }
+    }
+    
+    // 推送到队列
     msg_queue_.Push(msg.data);
+    
+    // 添加调试：记录推送
+    static int push_count = 0;
+    push_count++;
+    if (push_count % 100 == 0) {
+        Log("DEBUG", "OnMiddlewareMessage: Pushed " + std::to_string(push_count) + " messages to queue");
+    }
 }
 
 void VisualizerServer::OnSystemStatus(const simple_middleware::Message& msg) {
@@ -240,10 +358,40 @@ void VisualizerServer::OnSystemStatus(const simple_middleware::Message& msg) {
 void VisualizerServer::ConsumeLoop() {
     Log("INFO", "Consumer thread running");
     std::string data;
+    static int msg_count = 0;
+    static int map_msg_count = 0;
     while (running_) {
         if (msg_queue_.Pop(data)) {
             if (!running_) break;
+            
+            // 检查是否是地图数据
+            if (data.find("\"type\"") != std::string::npos && 
+                data.find("\"map_data\"") != std::string::npos) {
+                if (map_msg_count++ % 10 == 0 || map_msg_count == 1) {
+                    Log("INFO", "ConsumeLoop: Broadcasting map_data, size=" + std::to_string(data.size()) + " bytes");
+                    // 打印JSON预览
+                    std::string preview = data.substr(0, std::min(200UL, data.size()));
+                    Log("DEBUG", "Map data preview: " + preview + "...");
+                }
+            }
+            
+            // 检查是否是预测轨迹数据
+            if (data.find("\"type\"") != std::string::npos && 
+                data.find("\"prediction_trajectories\"") != std::string::npos) {
+                static int pred_msg_count = 0;
+                if (pred_msg_count++ % 10 == 0 || pred_msg_count == 1) {
+                    Log("INFO", "ConsumeLoop: Broadcasting prediction_trajectories, size=" + std::to_string(data.size()) + " bytes");
+                    // 打印JSON预览
+                    std::string preview = data.substr(0, std::min(200UL, data.size()));
+                    Log("DEBUG", "Prediction data preview: " + preview + "...");
+                }
+            }
+            
             BroadcastMessage(data);
+            msg_count++;
+            if (msg_count % 100 == 0) {
+                Log("DEBUG", "ConsumeLoop: Broadcasted " + std::to_string(msg_count) + " messages");
+            }
         }
     }
     Log("INFO", "Consumer thread exited");
@@ -647,6 +795,316 @@ void VisualizerServer::OnTrajectoryChunk(const simple_middleware::Message& msg) 
         static int error_count = 0;
         if (error_count++ % 10 == 0) {
             Log("ERROR", "Unknown exception in OnTrajectoryChunk");
+        }
+    }
+}
+
+void VisualizerServer::OnMapChunk(const simple_middleware::Message& msg) {
+    if (!running_) return;
+    
+    try {
+        // 解析分片头：frame_id(4) + chunk_id(4) + total_chunks(4) + chunk_size(4) + chunk_data
+        if (msg.data.size() < 16) {
+            static int error_count = 0;
+            if (error_count++ % 100 == 0) {
+                Log("WARN", "Map chunk too small: " + std::to_string(msg.data.size()) + " bytes");
+            }
+            return;
+        }
+        
+        const uint32_t* header = reinterpret_cast<const uint32_t*>(msg.data.data());
+        uint32_t frame_id = ntohl(header[0]);
+        uint32_t chunk_id = ntohl(header[1]);
+        uint32_t total_chunks = ntohl(header[2]);
+        uint32_t chunk_size = ntohl(header[3]);
+        
+        if (msg.data.size() != 16 + chunk_size) {
+            static int error_count = 0;
+            if (error_count++ % 100 == 0) {
+                Log("WARN", "Map chunk size mismatch: expected " + std::to_string(16 + chunk_size) 
+                    + ", got " + std::to_string(msg.data.size()));
+            }
+            return;
+        }
+        
+        // 提取分片数据
+        std::string chunk_data = msg.data.substr(16, chunk_size);
+        
+        bool should_process = false;
+        std::string full_data;
+        
+        {
+            std::lock_guard<std::mutex> lock(chunk_mutex_);
+            
+            // 获取或创建分片缓冲区（使用frame_id + 0x80000000来区分地图数据和轨迹数据）
+            uint32_t map_frame_id = frame_id | 0x80000000;
+            auto& buffer = chunk_buffers_[map_frame_id];
+            buffer.frame_id = frame_id;
+            buffer.total_chunks = total_chunks;
+            buffer.last_update = std::chrono::steady_clock::now();
+            
+            // 确保 chunks 数组大小足够
+            if (buffer.chunks.size() < total_chunks) {
+                buffer.chunks.resize(total_chunks);
+            }
+            
+            // 存储分片数据
+            if (chunk_id < total_chunks) {
+                buffer.chunks[chunk_id] = chunk_data;
+            }
+            
+            // 检查是否所有分片都已收到
+            bool all_received = true;
+            for (size_t i = 0; i < total_chunks; ++i) {
+                if (buffer.chunks[i].empty()) {
+                    all_received = false;
+                    break;
+                }
+            }
+            
+            if (all_received) {
+                // 重组完整数据
+                full_data.reserve(total_chunks * chunk_data.size());
+                for (const auto& chunk : buffer.chunks) {
+                    full_data += chunk;
+                }
+                
+                should_process = true;
+                chunk_buffers_.erase(map_frame_id);
+            }
+            
+            // 清理超时的分片缓冲区
+            auto now = std::chrono::steady_clock::now();
+            for (auto it = chunk_buffers_.begin(); it != chunk_buffers_.end();) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - it->second.last_update).count();
+                if (elapsed > CHUNK_TIMEOUT_MS) {
+                    Log("WARN", "Map chunk timeout for frame " + std::to_string(it->first));
+                    it = chunk_buffers_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        
+        // 在锁外处理完整数据
+        if (should_process) {
+            static int reassemble_count = 0;
+            if (reassemble_count++ % 10 == 0) {
+                Log("DEBUG", "Reassembled map data frame " + std::to_string(frame_id) 
+                    + " from " + std::to_string(total_chunks) + " chunks, total size=" 
+                    + std::to_string(full_data.size()));
+            }
+            
+            // 构造完整的 Message 并转发给前端
+            simple_middleware::Message full_msg("visualizer/map", full_data);
+            full_msg.timestamp = msg.timestamp;
+            OnMiddlewareMessage(full_msg);
+        }
+    } catch (const std::exception& e) {
+        static int error_count = 0;
+        if (error_count++ % 10 == 0) {
+            Log("ERROR", "Exception in OnMapChunk: " + std::string(e.what()));
+        }
+    } catch (...) {
+        static int error_count = 0;
+        if (error_count++ % 10 == 0) {
+            Log("ERROR", "Unknown exception in OnMapChunk");
+        }
+    }
+}
+
+void VisualizerServer::OnPredictionChunk(const simple_middleware::Message& msg) {
+    if (!running_) return;
+    
+    try {
+        // 解析分片头：frame_id(4) + chunk_id(4) + total_chunks(4) + chunk_size(4) + chunk_data
+        if (msg.data.size() < 16) {
+            static int error_count = 0;
+            if (error_count++ % 100 == 0) {
+                Log("WARN", "Prediction chunk too small: " + std::to_string(msg.data.size()) + " bytes");
+            }
+            return;
+        }
+        
+        const uint32_t* header = reinterpret_cast<const uint32_t*>(msg.data.data());
+        uint32_t frame_id = ntohl(header[0]);
+        uint32_t chunk_id = ntohl(header[1]);
+        uint32_t total_chunks = ntohl(header[2]);
+        uint32_t chunk_size = ntohl(header[3]);
+        
+        if (msg.data.size() != 16 + chunk_size) {
+            static int error_count = 0;
+            if (error_count++ % 100 == 0) {
+                Log("WARN", "Prediction chunk size mismatch: expected " + std::to_string(16 + chunk_size) 
+                    + ", got " + std::to_string(msg.data.size()));
+            }
+            return;
+        }
+        
+        // 提取分片数据
+        std::string chunk_data = msg.data.substr(16, chunk_size);
+        
+        bool should_process = false;
+        std::string full_data;
+        
+        {
+            std::lock_guard<std::mutex> lock(chunk_mutex_);
+            
+            // 获取或创建分片缓冲区（使用frame_id + 0x40000000来区分预测数据和轨迹数据）
+            uint32_t pred_frame_id = frame_id | 0x40000000;
+            auto& buffer = chunk_buffers_[pred_frame_id];
+            buffer.frame_id = frame_id;
+            buffer.total_chunks = total_chunks;
+            buffer.last_update = std::chrono::steady_clock::now();
+            
+            // 确保 chunks 数组大小足够
+            if (buffer.chunks.size() < total_chunks) {
+                buffer.chunks.resize(total_chunks);
+            }
+            
+            // 存储分片数据
+            if (chunk_id < total_chunks) {
+                buffer.chunks[chunk_id] = chunk_data;
+            }
+            
+            // 检查是否所有分片都已收到
+            bool all_received = true;
+            for (size_t i = 0; i < total_chunks; ++i) {
+                if (buffer.chunks[i].empty()) {
+                    all_received = false;
+                    break;
+                }
+            }
+            
+            if (all_received) {
+                // 重组完整数据
+                full_data.reserve(total_chunks * chunk_data.size());
+                for (const auto& chunk : buffer.chunks) {
+                    full_data += chunk;
+                }
+                
+                should_process = true;
+                chunk_buffers_.erase(pred_frame_id);
+            }
+            
+            // 清理超时的分片缓冲区
+            auto now = std::chrono::steady_clock::now();
+            for (auto it = chunk_buffers_.begin(); it != chunk_buffers_.end();) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - it->second.last_update).count();
+                if (elapsed > CHUNK_TIMEOUT_MS) {
+                    Log("WARN", "Prediction chunk timeout for frame " + std::to_string(it->first));
+                    it = chunk_buffers_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        
+        // 在锁外处理完整数据
+        if (should_process) {
+            static int reassemble_count = 0;
+            if (reassemble_count++ % 10 == 0) {
+                Log("DEBUG", "Reassembled prediction data frame " + std::to_string(frame_id) 
+                    + " from " + std::to_string(total_chunks) + " chunks, total size=" 
+                    + std::to_string(full_data.size()));
+            }
+            
+            // 构造完整的 Message 并调用 OnPredictionTrajectories
+            simple_middleware::Message full_msg("prediction/trajectories", full_data);
+            full_msg.timestamp = msg.timestamp;
+            OnPredictionTrajectories(full_msg);
+        }
+    } catch (const std::exception& e) {
+        static int error_count = 0;
+        if (error_count++ % 10 == 0) {
+            Log("ERROR", "Exception in OnPredictionChunk: " + std::string(e.what()));
+        }
+    } catch (...) {
+        static int error_count = 0;
+        if (error_count++ % 10 == 0) {
+            Log("ERROR", "Unknown exception in OnPredictionChunk");
+        }
+    }
+}
+
+void VisualizerServer::OnPredictionTrajectories(const simple_middleware::Message& msg) {
+    if (!running_) return;
+    
+    try {
+        std::string err;
+        Json json = Json::parse(msg.data, err);
+        if (!err.empty()) {
+            static int parse_fail_count = 0;
+            if (parse_fail_count++ % 10 == 0) {
+                Log("WARN", "Failed to parse prediction/trajectories JSON: " + err);
+            }
+            return;
+        }
+        
+        // 验证消息类型
+        if (json["type"].string_value() != "prediction_trajectories") {
+            return;
+        }
+        
+        // 构造发送给前端的消息格式
+        Json::array obstacles_array;
+        if (json["obstacles"].is_array()) {
+            for (const auto& obs : json["obstacles"].array_items()) {
+                Json::array trajectory_array;
+                if (obs["trajectory"].is_array()) {
+                    for (const auto& pt : obs["trajectory"].array_items()) {
+                        trajectory_array.push_back(Json::object{
+                            {"x", pt["x"].number_value()},
+                            {"y", pt["y"].number_value()},
+                            {"time_offset", pt["time_offset"].number_value()},
+                            {"confidence", pt["confidence"].number_value()}
+                        });
+                    }
+                }
+                
+                obstacles_array.push_back(Json::object{
+                    {"id", obs["id"].int_value()},
+                    {"current_position", obs["current_position"]},
+                    {"velocity", obs["velocity"]},
+                    {"trajectory", Json(trajectory_array)}
+                });
+            }
+        }
+        
+        Json prediction_msg = Json::object{
+            {"type", "prediction_trajectories"},
+            {"timestamp", json["timestamp"].number_value()},
+            {"obstacles", Json(obstacles_array)}
+        };
+        
+        // 发送给前端
+        std::string prediction_str = prediction_msg.dump();
+        msg_queue_.Push(prediction_str);
+        
+        static int pub_count = 0;
+        pub_count++;
+        // 总是打印前几次，然后每10次打印一次
+        if (pub_count <= 5 || pub_count % 10 == 0) {
+            Log("INFO", "OnPredictionTrajectories: Published prediction trajectories #" + std::to_string(pub_count)
+                + " for " + std::to_string(obstacles_array.size()) + " obstacles, json_size=" 
+                + std::to_string(prediction_str.size()) + " bytes");
+            // 打印JSON预览用于调试
+            if (pub_count <= 3 && prediction_str.size() > 0) {
+                std::string preview = prediction_str.substr(0, std::min(200UL, prediction_str.size()));
+                Log("DEBUG", "Prediction JSON preview: " + preview + "...");
+            }
+        }
+    } catch (const std::exception& e) {
+        static int error_count = 0;
+        if (error_count++ % 10 == 0) {
+            Log("ERROR", "Exception in OnPredictionTrajectories: " + std::string(e.what()));
+        }
+    } catch (...) {
+        static int error_count = 0;
+        if (error_count++ % 10 == 0) {
+            Log("ERROR", "Unknown exception in OnPredictionTrajectories");
         }
     }
 }

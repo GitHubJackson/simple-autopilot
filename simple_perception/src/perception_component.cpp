@@ -326,10 +326,16 @@ void PerceptionComponent::OnCameraData(const simple_middleware::Message& msg) {
         }
         try {
             simple_middleware::Logger::Info("Perception: Step 7.2: About to call middleware.publish for perception/obstacles");
-            simple_middleware::Logger::Info("Perception: Step 7.2.1: Before publish call, json_str.size()=" + std::to_string(json_str.size()));
+            simple_middleware::Logger::Info("Perception: Step 7.2.1: Before publish call, json_str.size()=" + std::to_string(json_str.size()) 
+                + ", obstacles count=" + std::to_string(obs_array.size()));
+            // 打印JSON预览用于调试
+            if (json_str.size() > 0 && json_str.size() < 200) {
+                simple_middleware::Logger::Debug("Perception: JSON preview: " + json_str);
+            }
             bool pub_result = middleware.publish("perception/obstacles", json_str);
             simple_middleware::Logger::Info("Perception: Step 7.2.2: After publish call, result=" + std::string(pub_result ? "success" : "failed"));
-            simple_middleware::Logger::Info("Perception: Step 8: Published perception/obstacles, result=" + std::string(pub_result ? "success" : "failed"));
+            simple_middleware::Logger::Info("Perception: Step 8: Published perception/obstacles, result=" + std::string(pub_result ? "success" : "failed") 
+                + ", obstacles=" + std::to_string(obs_array.size()));
         } catch (const std::exception& e) {
             simple_middleware::Logger::Error("Perception: Step 8: Publish failed: " + std::string(e.what()));
             return;

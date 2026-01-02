@@ -8,10 +8,16 @@ import "visualizer_data.proto"; // 引用 Point3D
 message Lane {
     int32 id = 1;
     repeated Point3D center_line = 2;
-    // 可以在这里扩展 left_boundary, right_boundary 等
+    repeated Point3D left_boundary = 3;   // 左边界
+    repeated Point3D right_boundary = 4; // 右边界
+    double width = 5;                     // 车道宽度（米）
+    int32 left_lane_id = 6;               // 左侧相邻车道ID（-1表示无）
+    int32 right_lane_id = 7;              // 右侧相邻车道ID（-1表示无）
+    string type = 8;                      // 车道类型："straight", "curve", "merge"等
 }
 
 // 地图数据
 message MapData {
     repeated Lane lanes = 1;
+    double default_lane_width = 2;        // 默认车道宽度（米）
 }

@@ -198,6 +198,7 @@
       let carState = { x: 0, y: 0, heading: 0, speed: 0, steering: 0 };
       let obstacles = [];
       let planningTrajectory = []; // 存储规划轨迹点
+      let predictionTrajectories = {}; // 存储预测轨迹 {obstacle_id: [trajectory_points]}
       let mapLanes = []; // 存储地图车道线
       let frameId = 0;
 
@@ -239,6 +240,16 @@
         socket.onmessage = (event) => {
           try {
             if (typeof event.data === "string") {
+              // 添加原始数据日志（仅对地图和预测数据）
+              if (
+                event.data.includes("map_data") ||
+                event.data.includes("prediction_trajectories")
+              ) {
+                console.log(
+                  "Raw WebSocket data received:",
+                  event.data.substring(0, 200) + "..."
+                );
+              }
               const msg = JSON.parse(event.data);
               if (msg.type === "frame_data" || msg.frame_id !== undefined) {
                 // 后端发送的是 frame_id (下划线)，不是 frameId (驼峰)
@@ -247,9 +258,126 @@
                 // 处理 Planning 轨迹
                 planningTrajectory = msg.trajectory || [];
                 draw();
+              } else if (msg.type === "prediction_trajectories") {
+                // 处理预测轨迹
+                console.log("Received prediction_trajectories:", msg);
+                console.log(
+                  "msg.obstacles type:",
+                  typeof msg.obstacles,
+                  "isArray:",
+                  Array.isArray(msg.obstacles),
+                  "length:",
+                  msg.obstacles ? msg.obstacles.length : 0
+                );
+
+                predictionTrajectories = {};
+                if (msg.obstacles && Array.isArray(msg.obstacles)) {
+                  console.log("Processing", msg.obstacles.length, "obstacles");
+                  for (const obs of msg.obstacles) {
+                    console.log(
+                      "Obstacle",
+                      obs.id,
+                      "trajectory:",
+                      obs.trajectory
+                        ? Array.isArray(obs.trajectory)
+                          ? obs.trajectory.length + " points"
+                          : "not array"
+                        : "missing"
+                    );
+                    if (obs.trajectory && Array.isArray(obs.trajectory)) {
+                      if (obs.trajectory.length > 0) {
+                        predictionTrajectories[obs.id] = obs.trajectory;
+                        console.log(
+                          "Added prediction for obstacle",
+                          obs.id,
+                          "with",
+                          obs.trajectory.length,
+                          "points, first point:",
+                          obs.trajectory[0]
+                        );
+                      } else {
+                        console.warn("Empty trajectory for obstacle", obs.id);
+                      }
+                    } else {
+                      console.warn(
+                        "Invalid trajectory for obstacle",
+                        obs.id,
+                        ":",
+                        obs.trajectory
+                      );
+                    }
+                  }
+                } else {
+                  console.warn(
+                    "No obstacles array in prediction_trajectories message"
+                  );
+                }
+                console.log(
+                  "Total prediction trajectories:",
+                  Object.keys(predictionTrajectories).length
+                );
+                draw();
               } else if (msg.type === "map_data") {
                 // 处理地图数据
-                mapLanes = msg.lanes || [];
+                console.log("Received map_data:", msg);
+                console.log(
+                  "msg.lanes type:",
+                  typeof msg.lanes,
+                  "isArray:",
+                  Array.isArray(msg.lanes),
+                  "length:",
+                  msg.lanes ? msg.lanes.length : 0
+                );
+
+                if (!msg.lanes || !Array.isArray(msg.lanes)) {
+                  console.error("Invalid lanes data:", msg.lanes);
+                  return;
+                }
+
+                mapLanes = msg.lanes.map((lane) => {
+                  console.log(
+                    "Processing lane:",
+                    lane.id,
+                    "center_line:",
+                    lane.center_line ? lane.center_line.length : 0,
+                    "points"
+                  );
+
+                  const mapped = {
+                    id: lane.id,
+                    centerLine: lane.center_line || [],
+                    leftBoundary: lane.left_boundary || [],
+                    rightBoundary: lane.right_boundary || [],
+                    width: lane.width || 3.5,
+                    leftLaneId: lane.left_lane_id || -1,
+                    rightLaneId: lane.right_lane_id || -1,
+                    type: lane.type || "straight",
+                  };
+
+                  // 验证数据
+                  if (!mapped.centerLine || !Array.isArray(mapped.centerLine)) {
+                    console.error(
+                      "Invalid centerLine for lane",
+                      mapped.id,
+                      ":",
+                      mapped.centerLine
+                    );
+                  } else if (mapped.centerLine.length === 0) {
+                    console.warn("Empty centerLine for lane", mapped.id);
+                  } else {
+                    console.log(
+                      "Lane",
+                      mapped.id,
+                      "has",
+                      mapped.centerLine.length,
+                      "centerLine points, first point:",
+                      mapped.centerLine[0]
+                    );
+                  }
+
+                  return mapped;
+                });
+                console.log("Total lanes mapped:", mapLanes.length);
                 draw();
               }
             } else if (event.data instanceof ArrayBuffer) {
@@ -257,7 +385,48 @@
               handleCameraData(event.data);
             }
           } catch (e) {
-            console.error("Parse error:", e);
+            console.error("Parse error:", e, "data:", event.data);
+            // 如果是字符串，尝试直接解析
+            if (typeof event.data === "string") {
+              try {
+                const msg = JSON.parse(event.data);
+                console.log("Successfully parsed after error:", msg);
+                // 重新处理消息
+                if (msg.type === "map_data") {
+                  console.log("Processing map_data after error recovery");
+                  mapLanes = (msg.lanes || []).map((lane) => {
+                    const mapped = {
+                      id: lane.id,
+                      centerLine: lane.center_line || [],
+                      leftBoundary: lane.left_boundary || [],
+                      rightBoundary: lane.right_boundary || [],
+                      width: lane.width || 3.5,
+                      leftLaneId: lane.left_lane_id || -1,
+                      rightLaneId: lane.right_lane_id || -1,
+                      type: lane.type || "straight",
+                    };
+                    return mapped;
+                  });
+                  console.log("Total lanes after recovery:", mapLanes.length);
+                  draw();
+                } else if (msg.type === "prediction_trajectories") {
+                  console.log(
+                    "Processing prediction_trajectories after error recovery"
+                  );
+                  predictionTrajectories = {};
+                  if (msg.obstacles && Array.isArray(msg.obstacles)) {
+                    for (const obs of msg.obstacles) {
+                      if (obs.trajectory && Array.isArray(obs.trajectory)) {
+                        predictionTrajectories[obs.id] = obs.trajectory;
+                      }
+                    }
+                  }
+                  draw();
+                }
+              } catch (e2) {
+                console.error("Recovery parse error:", e2);
+              }
+            }
           }
         };
       }
@@ -362,6 +531,7 @@
       }
 
       // --- Rendering ---
+      let drawCallCount = 0; // 用于调试计数
       function worldToScreen(wx, wy) {
         let cx = 0;
         let cy = 0;
@@ -380,6 +550,7 @@
       }
 
       function draw() {
+        drawCallCount++;
         // Clear background
         ctx.fillStyle = "#121212";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -429,19 +600,61 @@
         ctx.setLineDash([]);
 
         // Draw Map Lanes
+        if (mapLanes.length === 0) {
+          // 只在每100次绘制时打印，避免日志过多
+          if (drawCallCount % 100 === 0) {
+            console.warn(
+              "No map lanes to draw (draw call:",
+              drawCallCount,
+              ")"
+            );
+          }
+        } else if (drawCallCount % 10 === 0) {
+          // 每10次绘制打印一次
+          console.log("Drawing", mapLanes.length, "lanes");
+        }
         mapLanes.forEach((lane) => {
-          if (!lane.centerLine || lane.centerLine.length === 0) return;
+          if (!lane.centerLine || lane.centerLine.length === 0) {
+            console.warn(
+              "Lane",
+              lane.id,
+              "has no centerLine, centerLine=",
+              lane.centerLine
+            );
+            return;
+          }
 
-          ctx.strokeStyle = "#888"; // 灰色车道线
+          // 绘制左边界（黄色虚线）
+          if (lane.leftBoundary && lane.leftBoundary.length > 0) {
+            ctx.strokeStyle = "#ffaa00"; // 黄色
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 5]); // 虚线
+            ctx.beginPath();
+            const startLeft = worldToScreen(
+              lane.leftBoundary[0].x,
+              lane.leftBoundary[0].y
+            );
+            ctx.moveTo(startLeft.x, startLeft.y);
+            for (let i = 1; i < lane.leftBoundary.length; i++) {
+              const pt = worldToScreen(
+                lane.leftBoundary[i].x,
+                lane.leftBoundary[i].y
+              );
+              ctx.lineTo(pt.x, pt.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          // 绘制中心线（灰色实线）
+          ctx.strokeStyle = "#888"; // 灰色
           ctx.lineWidth = 2;
           ctx.beginPath();
-
           const start = worldToScreen(
             lane.centerLine[0].x,
             lane.centerLine[0].y
           );
           ctx.moveTo(start.x, start.y);
-
           for (let i = 1; i < lane.centerLine.length; i++) {
             const pt = worldToScreen(
               lane.centerLine[i].x,
@@ -450,6 +663,28 @@
             ctx.lineTo(pt.x, pt.y);
           }
           ctx.stroke();
+
+          // 绘制右边界（黄色虚线）
+          if (lane.rightBoundary && lane.rightBoundary.length > 0) {
+            ctx.strokeStyle = "#ffaa00"; // 黄色
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 5]); // 虚线
+            ctx.beginPath();
+            const startRight = worldToScreen(
+              lane.rightBoundary[0].x,
+              lane.rightBoundary[0].y
+            );
+            ctx.moveTo(startRight.x, startRight.y);
+            for (let i = 1; i < lane.rightBoundary.length; i++) {
+              const pt = worldToScreen(
+                lane.rightBoundary[i].x,
+                lane.rightBoundary[i].y
+              );
+              ctx.lineTo(pt.x, pt.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
 
           // Draw Lane ID
           if (lane.centerLine.length > 0) {
@@ -482,6 +717,48 @@
             ctx.lineTo(pt.x, pt.y);
           }
           ctx.stroke();
+        }
+
+        // Draw Prediction Trajectories (预测轨迹)
+        const predictionCount = Object.keys(predictionTrajectories).length;
+        if (predictionCount > 0) {
+          if (drawCallCount % 10 === 0) {
+            console.log("Drawing", predictionCount, "prediction trajectories");
+          }
+        } else {
+          // 只在每100次绘制时打印，避免日志过多
+          if (drawCallCount % 100 === 0) {
+            console.warn(
+              "No prediction trajectories to draw (draw call:",
+              drawCallCount,
+              ")"
+            );
+          }
+        }
+        for (const [obstacleId, trajectory] of Object.entries(
+          predictionTrajectories
+        )) {
+          if (trajectory && trajectory.length > 0) {
+            ctx.strokeStyle = "#ff8800"; // 橙色
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]); // 虚线样式
+            ctx.beginPath();
+            const start = worldToScreen(trajectory[0].x, trajectory[0].y);
+            ctx.moveTo(start.x, start.y);
+            for (let i = 1; i < trajectory.length; i++) {
+              const pt = worldToScreen(trajectory[i].x, trajectory[i].y);
+              ctx.lineTo(pt.x, pt.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]); // 重置为实线
+          } else {
+            console.warn(
+              "Empty trajectory for obstacle",
+              obstacleId,
+              "trajectory=",
+              trajectory
+            );
+          }
         }
 
         // Draw Obstacles

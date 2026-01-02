@@ -6,6 +6,10 @@
 #include <google/protobuf/util/json_util.h>
 #include <simple_middleware/logger.hpp> // Add logger include
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 using namespace json11;
 
 SimulatorCore::SimulatorCore() : running_(false) {
@@ -58,8 +62,8 @@ void SimulatorCore::InitScenario() {
     car->set_heading(0.0);
     car->set_speed(0.0);
     
-    // 初始化一些静态障碍物 (这就是所谓的“真值”)
-    // 1. 挡路车 (Blocking Car) - 放在正前方 30m
+    // 初始化障碍物（包含静态和动态障碍物）
+    // 1. 静态挡路车 (Blocking Car) - 放在正前方 30m（静止）
     auto* obs1 = world_state_.add_obstacles();
     obs1->set_id(1);
     obs1->mutable_position()->set_x(30.0);
@@ -67,15 +71,47 @@ void SimulatorCore::InitScenario() {
     obs1->set_type("car");
     obs1->set_length(4.5);
     obs1->set_width(1.8);
+    obs1->set_heading(0.0);  // 朝向X轴正方向
 
-    // 2. 远处的车 (Left Lane)
+    // 2. 动态障碍物 - 同向慢车（在左侧车道，向前移动）
     auto* obs2 = world_state_.add_obstacles();
     obs2->set_id(2);
-    obs2->mutable_position()->set_x(60.0);
+    obs2->mutable_position()->set_x(50.0);
     obs2->mutable_position()->set_y(3.5);
     obs2->set_type("car");
     obs2->set_length(4.5);
     obs2->set_width(1.8);
+    obs2->set_heading(0.0);
+    
+    // 设置动态障碍物的速度（3 m/s，约10.8 km/h，模拟慢车）
+    DynamicObstacle dyn_obs2;
+    dyn_obs2.speed = 3.0;  // 3 m/s
+    dyn_obs2.heading = 0.0;  // 沿X轴正方向
+    dyn_obs2.vx = dyn_obs2.speed * std::cos(dyn_obs2.heading);
+    dyn_obs2.vy = dyn_obs2.speed * std::sin(dyn_obs2.heading);
+    dynamic_obstacles_[2] = dyn_obs2;
+    
+    // 3. 动态障碍物 - 对向车辆（在右侧车道，向后移动）
+    auto* obs3 = world_state_.add_obstacles();
+    obs3->set_id(3);
+    obs3->mutable_position()->set_x(80.0);
+    obs3->mutable_position()->set_y(-3.5);
+    obs3->set_type("car");
+    obs3->set_length(4.5);
+    obs3->set_width(1.8);
+    obs3->set_heading(M_PI);  // 朝向X轴负方向（对向）
+    
+    // 设置动态障碍物的速度（5 m/s，约18 km/h，模拟对向车）
+    DynamicObstacle dyn_obs3;
+    dyn_obs3.speed = 5.0;  // 5 m/s
+    dyn_obs3.heading = M_PI;  // 沿X轴负方向
+    dyn_obs3.vx = dyn_obs3.speed * std::cos(dyn_obs3.heading);
+    dyn_obs3.vy = dyn_obs3.speed * std::sin(dyn_obs3.heading);
+    dynamic_obstacles_[3] = dyn_obs3;
+    
+    simple_middleware::Logger::Info("Simulator: Initialized scenario with " 
+        + std::to_string(world_state_.obstacles_size()) + " obstacles ("
+        + std::to_string(dynamic_obstacles_.size()) + " dynamic)");
 }
 
 void SimulatorCore::OnControlCommand(const simple_middleware::Message& msg) {
@@ -156,6 +192,43 @@ void SimulatorCore::StepPhysics(double dt) {
     car->mutable_position()->set_x(car->position().x() + dx);
     car->mutable_position()->set_y(car->position().y() + dy);
     car->set_heading(heading + dheading);
+    
+    // 更新动态障碍物位置
+    UpdateDynamicObstacles(dt);
+}
+
+void SimulatorCore::UpdateDynamicObstacles(double dt) {
+    // 遍历所有障碍物，更新动态障碍物的位置
+    for (int i = 0; i < world_state_.obstacles_size(); ++i) {
+        auto* obs = world_state_.mutable_obstacles(i);
+        int32_t obs_id = obs->id();
+        
+        // 检查是否是动态障碍物
+        auto it = dynamic_obstacles_.find(obs_id);
+        if (it != dynamic_obstacles_.end()) {
+            const DynamicObstacle& dyn_obs = it->second;
+            
+            // 更新位置（匀速直线运动）
+            double new_x = obs->position().x() + dyn_obs.vx * dt;
+            double new_y = obs->position().y() + dyn_obs.vy * dt;
+            
+            obs->mutable_position()->set_x(new_x);
+            obs->mutable_position()->set_y(new_y);
+            obs->set_heading(dyn_obs.heading);
+            
+            // 如果障碍物移动太远，重置到初始位置（循环场景）
+            if (new_x > 150.0 || new_x < -50.0) {
+                // 重置到初始位置（根据障碍物ID）
+                if (obs_id == 2) {
+                    obs->mutable_position()->set_x(50.0);
+                    obs->mutable_position()->set_y(3.5);
+                } else if (obs_id == 3) {
+                    obs->mutable_position()->set_x(80.0);
+                    obs->mutable_position()->set_y(-3.5);
+                }
+            }
+        }
+    }
 }
 
 void SimulatorCore::RunLoop() {

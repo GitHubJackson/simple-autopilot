@@ -13,6 +13,7 @@
 #include <cstring>
 #include <iostream>
 #include <cerrno>
+#include <unordered_map>
 #include "logger.hpp"
 
 namespace simple_middleware {
@@ -126,11 +127,15 @@ void PubSubMiddleware::udpReceiveLoop() {
                 std::string data = raw_data.substr(sep_pos + 1);
                 
                 // 对于关键 topic，记录接收日志
-                if (topic == "sensor/camera/front" || topic == "perception/detection_2d" || topic == "planning/trajectory") {
-                    static int recv_count = 0;
-                    recv_count++;
-                    LOG_INFO("PubSubMiddleware") << "Received UDP packet: topic=" << topic 
-                        << ", data_size=" << data.size() << " bytes (count=" << recv_count << ")";
+                if (topic == "sensor/camera/front" || topic == "perception/detection_2d" || topic == "planning/trajectory" 
+                    || topic == "visualizer/map" || topic == "prediction/trajectories") {
+                    static std::unordered_map<std::string, int> recv_counts;
+                    recv_counts[topic]++;
+                    int count = recv_counts[topic];
+                    if (count <= 5 || count % 10 == 0) {
+                        LOG_INFO("PubSubMiddleware") << "Received UDP packet: topic=" << topic 
+                            << ", data_size=" << data.size() << " bytes (count=" << count << ")";
+                    }
                 }
                 
                 // 将接收到的网络消息分发给本地所有的订阅者
@@ -170,11 +175,15 @@ void PubSubMiddleware::dispatchLocal(const std::string& topic, const std::string
         auto it = topic_subscribers_.find(topic);
         if (it != topic_subscribers_.end()) {
             // 对于关键 topic，记录分发日志
-            if (topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory") {
-                static int dispatch_count = 0;
-                dispatch_count++;
-                LOG_INFO("PubSubMiddleware") << "Dispatching " << topic << " to " 
-                    << it->second.size() << " subscribers (count=" << dispatch_count << ")";
+            if (topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory"
+                || topic == "visualizer/map" || topic == "prediction/trajectories") {
+                static std::unordered_map<std::string, int> dispatch_counts;
+                dispatch_counts[topic]++;
+                int count = dispatch_counts[topic];
+                if (count <= 5 || count % 10 == 0) {
+                    LOG_INFO("PubSubMiddleware") << "Dispatching " << topic << " to " 
+                        << it->second.size() << " subscribers (count=" << count << ")";
+                }
             }
             
             // 收集所有需要调用的回调函数（在锁内）
@@ -182,54 +191,58 @@ void PubSubMiddleware::dispatchLocal(const std::string& topic, const std::string
                 auto sub_it = subscriptions_.find(sub_id);
                 if (sub_it != subscriptions_.end()) {
                 // 对于关键 topic，记录回调执行
-                if (topic == "sensor/camera/front" || topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory") {
-                    static int callback_count = 0;
-                    callback_count++;
-                    LOG_INFO("PubSubMiddleware") << "Calling callback for topic=" << topic 
-                        << ", sub_id=" << sub_id << " (count=" << callback_count << ")";
+                if (topic == "sensor/camera/front" || topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory"
+                    || topic == "visualizer/map" || topic == "prediction/trajectories") {
+                    static std::unordered_map<std::string, int> callback_counts;
+                    callback_counts[topic]++;
+                    int count = callback_counts[topic];
+                    if (count <= 5 || count % 10 == 0) {
+                        LOG_INFO("PubSubMiddleware") << "Calling callback for topic=" << topic 
+                            << ", sub_id=" << sub_id << " (count=" << count << ")";
+                    }
                 }
                     
                     // 将回调函数添加到列表中（复制回调函数和消息）
                     callbacks_to_execute.push_back([topic, sub_id, msg, sub_it]() {
                         // NOTE 在调用外部回调时使用 try-catch，防止某一个订阅者的错误搞崩整个中间件
                         try {
-                            if (topic == "perception/obstacles") {
-                                LOG_INFO("PubSubMiddleware") << "About to execute callback for perception/obstacles, sub_id=" << sub_id;
+                            // 对于关键 topic，记录回调执行前后
+                            bool is_key_topic = (topic == "perception/obstacles" || topic == "visualizer/map" || topic == "prediction/trajectories");
+                            if (is_key_topic) {
+                                static std::unordered_map<std::string, int> exec_counts;
+                                exec_counts[topic]++;
+                                int count = exec_counts[topic];
+                                if (count <= 3) {
+                                    LOG_INFO("PubSubMiddleware") << "About to execute callback for " << topic << ", sub_id=" << sub_id;
+                                }
                             }
                             sub_it->second.callback(msg);
-                            if (topic == "perception/obstacles") {
-                                LOG_INFO("PubSubMiddleware") << "Callback completed for perception/obstacles, sub_id=" << sub_id;
+                            if (is_key_topic) {
+                                static std::unordered_map<std::string, int> exec_counts;
+                                exec_counts[topic]++;
+                                int count = exec_counts[topic];
+                                if (count <= 3) {
+                                    LOG_INFO("PubSubMiddleware") << "Callback completed for " << topic << ", sub_id=" << sub_id;
+                                }
                             }
                         } catch (const std::exception& e) {
                             LOG_ERROR("PubSubMiddleware") << "回调执行发生异常, topic=" << topic 
-                                << ", error=" << e.what();
+                                << ", sub_id=" << sub_id << ", error=" << e.what();
                         } catch (...) {
-                            LOG_ERROR("PubSubMiddleware") << "回调执行发生未知错误, topic=" << topic;
+                            LOG_ERROR("PubSubMiddleware") << "回调执行发生未知错误, topic=" << topic << ", sub_id=" << sub_id;
                         }
                     });
                 }
             }
         } else {
             // 对于关键 topic，记录没有订阅者的情况
-            if (topic == "perception/detection_2d") {
-                static int no_sub_count = 0;
-                if (no_sub_count++ % 10 == 0) {
-                    LOG_WARN("PubSubMiddleware") << "No subscribers for perception/detection_2d (count=" 
-                        << no_sub_count << ")";
-                }
-            }
-            if (topic == "perception/obstacles") {
-                static int no_sub_count = 0;
-                if (no_sub_count++ % 10 == 0) {
-                    LOG_WARN("PubSubMiddleware") << "No subscribers for perception/obstacles (count=" 
-                        << no_sub_count << ")";
-                }
-            }
-            if (topic == "planning/trajectory") {
-                static int no_sub_count = 0;
-                if (no_sub_count++ % 10 == 0) {
-                    LOG_WARN("PubSubMiddleware") << "No subscribers for planning/trajectory (count=" 
-                        << no_sub_count << ")";
+            if (topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory"
+                || topic == "visualizer/map" || topic == "prediction/trajectories") {
+                static std::unordered_map<std::string, int> no_sub_counts;
+                no_sub_counts[topic]++;
+                int count = no_sub_counts[topic];
+                if (count <= 3 || count % 10 == 0) {
+                    LOG_WARN("PubSubMiddleware") << "No subscribers for " << topic << " (count=" << count << ")";
                 }
             }
         }
@@ -245,17 +258,38 @@ bool PubSubMiddleware::publish(const std::string& topic, const std::string& data
     if (topic.empty()) return false;
 
     // 对于关键 topic，记录发布日志
-    if (topic == "sensor/camera/front" || topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory") {
-        static int pub_count = 0;
-        pub_count++;
-        LOG_INFO("PubSubMiddleware") << "Publishing " << topic << " #" << pub_count 
-            << ", data_size=" << data.size() << " bytes";
+    if (topic == "sensor/camera/front" || topic == "perception/detection_2d" || topic == "perception/obstacles" || topic == "planning/trajectory"
+        || topic == "visualizer/map" || topic == "prediction/trajectories") {
+        static std::unordered_map<std::string, int> pub_counts;
+        pub_counts[topic]++;
+        int count = pub_counts[topic];
+        if (count <= 5 || count % 10 == 0) {
+            LOG_INFO("PubSubMiddleware") << "Publishing " << topic << " #" << count 
+                << ", data_size=" << data.size() << " bytes";
+        }
     }
 
     // 1. 本地分发：同一进程内的订阅者能更快收到
-    LOG_INFO("PubSubMiddleware") << "About to call dispatchLocal for topic=" << topic;
+    // 只对关键topic记录dispatchLocal的调用
+    bool is_key_topic = (topic == "visualizer/map" || topic == "prediction/trajectories" 
+                        || topic == "perception/obstacles" || topic == "planning/trajectory");
+    if (is_key_topic) {
+        static std::unordered_map<std::string, int> dispatch_log_counts;
+        dispatch_log_counts[topic]++;
+        int count = dispatch_log_counts[topic];
+        if (count <= 3) {
+            LOG_INFO("PubSubMiddleware") << "About to call dispatchLocal for topic=" << topic;
+        }
+    }
     dispatchLocal(topic, data);
-    LOG_INFO("PubSubMiddleware") << "dispatchLocal completed for topic=" << topic;
+    if (is_key_topic) {
+        static std::unordered_map<std::string, int> dispatch_log_counts;
+        dispatch_log_counts[topic]++;
+        int count = dispatch_log_counts[topic];
+        if (count <= 3) {
+            LOG_INFO("PubSubMiddleware") << "dispatchLocal completed for topic=" << topic;
+        }
+    }
 
     // 2. UDP 网络广播：发送给其他进程或机器
     if (udp_socket_fd_ >= 0) {
@@ -271,11 +305,19 @@ bool PubSubMiddleware::publish(const std::string& topic, const std::string& data
         }
         
         // 对于关键 topic，记录 UDP 发送日志
-        if (topic == "planning/trajectory") {
-            static int send_count = 0;
-            send_count++;
-            LOG_INFO("PubSubMiddleware") << "Sending UDP packet: topic=" << topic 
-                << ", packet_size=" << packet_size << " bytes (count=" << send_count << ")";
+        if (topic == "planning/trajectory" || topic == "visualizer/map" || topic == "prediction/trajectories") {
+            static std::unordered_map<std::string, int> send_counts;
+            send_counts[topic]++;
+            int count = send_counts[topic];
+            if (count <= 5 || count % 10 == 0) {
+                LOG_INFO("PubSubMiddleware") << "Sending UDP packet: topic=" << topic 
+                    << ", packet_size=" << packet_size << " bytes (count=" << count << ")";
+                // 对于大包，警告可能超过MTU
+                if (packet_size > 1500) {
+                    LOG_WARN("PubSubMiddleware") << "Large packet may exceed MTU (1500 bytes): " 
+                        << packet_size << " bytes, topic=" << topic;
+                }
+            }
         }
         
         ssize_t sent = sendto(udp_socket_fd_, raw_packet.c_str(), packet_size, 0, 
